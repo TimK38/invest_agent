@@ -32,8 +32,11 @@
 ./install.sh 你的名字
 ```
 
-會建立虛擬環境、產生 `profiles/你的名字.json`、把 `trade-check` skill 裝到
-`~/.claude/skills/`（自動填入本機路徑）、必要時建立大盤資料。
+會建立虛擬環境、產生 `profiles/你的名字.json`、安裝 `trade-check` skill、必要時建立大盤資料。
+若偵測到虛擬環境的路徑與現況不符（資料夾曾搬移或改名），會自動重建。
+
+> **skill 有兩份**：`.claude/skills/`（隨倉庫散布，clone 下來在本目錄開 Claude Code 就能用）
+> 與 `~/.claude/skills/`（install.sh 產生，在任何目錄都能觸發）。兩份由同一個範本產生，不會走鐘。
 
 裝完**務必編輯 `profiles/你的名字.json`**，至少填 `net_worth`，否則腳本會拒絕執行。
 `notes` 欄位寫你自己的交易弱點，Claude 每次檢查時會特別盯那幾點。
@@ -62,7 +65,8 @@ invest_agent/
 ├── profile_loader.py    個人設定載入器
 ├── market_state.py      每日：盤面狀態、槓桿上限、部位反推
 ├── portfolio_check.py   每日：持股曝險、追繳線、逐檔停損
-├── skill/               trade-check skill 範本（install.sh 會填路徑後安裝）
+├── skill/               trade-check skill 範本（install.sh 依此產生下面兩份）
+├── .claude/skills/      專案版 skill（相對路徑，隨倉庫散布）
 ├── fetch/               資料取得與清洗
 ├── research/            門檻推導過程（每季重跑驗證，不要刪）
 ├── data/                ← 本機生成，不隨倉庫散布（install.sh 會建檔）
