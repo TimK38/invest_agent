@@ -5,6 +5,7 @@
   python portfolio_check.py --hold 00981A:48:26.13:25.60 009816:85:14.65:14.30
   python portfolio_check.py --hold 00981A:50:26.13 --cash
   python portfolio_check.py --profile 朋友名字
+  python portfolio_check.py --asof 2025-01-06 --hold 0050:20   # 重現當時的判斷
 
   不給 --hold 就從 profiles/<名字>_positions.json 讀，含每檔的成本、當初停損、是否融資。
   持股用 positions.py 維護，不要每天手打。
@@ -59,6 +60,7 @@ def main():
                     help="不給就讀 positions.py 的持股紀錄")
     ap.add_argument("--net-worth", type=float, help="覆寫 profile 的淨資產")
     ap.add_argument("--cash", action="store_true", help="這批持股為現股（無融資）")
+    ap.add_argument("--asof", help="只用該日(含)以前的資料重現當時判斷 YYYY-MM-DD")
     profile_loader.add_arg(ap)
     a = ap.parse_args()
 
@@ -68,12 +70,14 @@ def main():
     margin_rate = cfg["margin_rate"]
     mix = cfg.get("asset_mix") or {"stable_target": 0.72, "tolerance": 0.10, "stable_rc_max": 1.2}
 
-    idx, mstate, code = taiex_state()
+    idx, mstate, code = taiex_state(a.asof)
     pos_coef = float(np.clip(1.8 / mstate.atrp, 0.4, 1.0))
     target_lev = LEV_CAP[code] * pos_coef
     NW = a.net_worth or cfg["net_worth"]
 
     st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    if a.asof:
+        st = st[st.date <= pd.Timestamp(a.asof)]
     mret = idx.set_index("date").ret
 
     # 持股來源：--hold 優先，否則讀 positions.py 的紀錄（含每筆自己的融資設定）
@@ -158,6 +162,26 @@ def main():
     if not ok:
         over = ex_tot - NW * target_lev
         print(f"  ▶ 需降低曝險 {over:,.0f} 元（約當市值 {over/(ex_tot/mv_tot):,.0f} 元）")
+    else:
+        # 加碼空間受兩條限制：§3 槓桿上限、以及自備款。顯示哪一條先綁住。
+        room_ex = NW * target_lev - ex_tot
+        room_cash = NW - (mv_tot - margin)
+        buy_cash = room_cash
+        buy_marg = room_cash / (1 - margin_rate) if cfg["margin_allowed"] else room_cash
+        print(f"  ▶ 加碼空間　槓桿剩 {room_ex:,.0f} 曝險　│　"
+              f"自備款剩 {room_cash:,.0f} → 現股可買 {buy_cash:,.0f}"
+              + (f"、融資可買 {buy_marg:,.0f}" if cfg["margin_allowed"] else ""))
+        if buy_marg > 0:
+            need_rc = room_ex / buy_marg
+            if need_rc > 2.2:
+                print(f"    綁住你的是**自備款**，不是槓桿上限："
+                      f"把自備款用滿也只能再加 {buy_marg*2.2:,.0f} 曝險"
+                      f"（即使買風險係數 2.2 的標的），仍達不到上限。")
+            elif need_rc > 1.2:
+                print(f"    要用滿槓桿上限，新部位的加權風險係數需 ≥ {need_rc:.2f}"
+                      f"（0050 為 1.09、00981A 1.43、聯電 1.75、0050正2 2.11）。")
+            else:
+                print(f"    綁住你的是**槓桿上限**：自備款還夠，但曝險只剩 {room_ex:,.0f}。")
 
     # ── §4 資產結構 ──
     print("\n  ── 資產結構（§4：依風險係數分類，不依名稱）" + "─" * 34)
