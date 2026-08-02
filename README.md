@@ -64,7 +64,9 @@ invest_agent/
 ├── paths.py             檔案路徑集中管理
 ├── profile_loader.py    個人設定載入器
 ├── market_state.py      每日：盤面狀態、槓桿上限、部位反推
-├── portfolio_check.py   每日：持股曝險、追繳線、逐檔停損
+├── portfolio_check.py   每日：持股曝險、追繳線、逐檔出場動作
+├── positions.py         持股紀錄（成本／當初停損／融資別）單一事實來源
+├── buy_check.py         買進前檢查，可盤中用（即時價 + 既有部位曝險）
 ├── skill/               trade-check skill 範本（install.sh 依此產生下面兩份）
 ├── .claude/skills/      專案版 skill（相對路徑，隨倉庫散布）
 ├── fetch/               資料取得與清洗
@@ -88,9 +90,26 @@ invest_agent/
 # 1. 看盤面（會自動更新最近兩個月資料）
 ./envest_agent/bin/python market_state.py
 
-# 2. 檢視持股
-./envest_agent/bin/python portfolio_check.py --hold 00981A:50:26.13 009816:85
+# 2. 檢視持股（自動讀持股紀錄，不必每天重打成本與停損）
+./envest_agent/bin/python portfolio_check.py
+
+# 3. 想買東西時（可盤中，會抓即時價並加總既有部位的曝險）
+./envest_agent/bin/python buy_check.py 3481 100
 ```
+
+## 持股紀錄
+
+成本與**當初設定的停損價**只該輸入一次，之後每天讀紀錄。存在
+`profiles/<名字>_positions.json`（已在 .gitignore 內）。
+
+```bash
+./envest_agent/bin/python positions.py                            # 列出
+./envest_agent/bin/python positions.py --add 3481:20:45.5:41.0    # SID:張數:成本:停損[:cash]
+./envest_agent/bin/python positions.py --close 3481:42.0:停損      # 出場（原因用「停損」會自動計數）
+./envest_agent/bin/python positions.py --reconcile 3481:20:45.5   # 與紀錄比對，加 --apply 才寫入
+```
+
+同一檔 30 天內停損 2 次，`positions.py` 與 `buy_check.py` 都會依 §7 擋下並顯示解禁日。
 
 多人共用同一份專案時，加 `--profile <名字>` 或設定環境變數 `INVEST_PROFILE`。
 
@@ -108,15 +127,16 @@ invest_agent/
 
 ```bash
 ./envest_agent/bin/python fetch/fetch_stocks.py 2454 00981A --since 2023-07
-./envest_agent/bin/python fetch/clean_stocks.py      # 補完一定要跑，處理股票分割
+./envest_agent/bin/python fetch/clean_stocks.py      # 補完一定要跑，處理分割與減資
 ```
 
 資料會**併入** `data/stocks_daily.csv`，不會產生新檔案。
 
 > ⚠ TWSE 的 `STOCK_DAY` 回傳**未還原權值的原始價**。0050 於 2025-06-18 分割 1:4、
 > 00631L 於 2026-03-31 分割約 1:22，不還原會得到「0050 三年報酬 -21%」這種荒謬結果。
-> `clean_stocks.py` 會偵測「停牌後異常跳空」並用大盤同期漲跌還原，且錨定在最新成交價
-> ——還原後的價格等於實際盤面價格，可以直接拿來下單。
+> 減資則相反，造成**向上**跳空（群創 3481 於 2024-08 一次 +14.4%），不還原會虛增報酬。
+> `clean_stocks.py` 以「大盤有交易而該檔沒有」判定停牌，用大盤同期漲跌還原復牌日的報酬，
+> 兩個方向都涵蓋，且錨定在最新成交價——還原後的價格等於實際盤面價格，可以直接拿來下單。
 
 ## 新增文章（選用）
 
