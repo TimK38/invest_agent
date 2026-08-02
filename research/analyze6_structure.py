@@ -42,7 +42,7 @@ def stats(name, ret):
 
 
 ETF = px["0050"]                                   # 現股 ETF 代表
-STK = px[["2409", "2303"]].pct_change().mean(axis=1)   # 融資個股：等權 群創+聯電
+STK = px[["2409", "2303"]].pct_change().mean(axis=1)   # 融資個股：等權 友達(2409)+聯電
 etf_r = ETF.pct_change()
 LEV = 1.5
 
@@ -65,7 +65,7 @@ rows.append(stats("⑦ 半現股ETF也套規則 + 半融資個股套規則",
                   0.5 * rule_pos(ETF).shift(1) * etf_r + 0.5 * p_stk.shift(1) * STK * LEV))
 
 print("=" * 118)
-print("【A】配置比較（融資個股 = 等權 群創+聯電 × 1.5 倍）")
+print("【A】配置比較（融資個股 = 等權 友達(2409)+聯電 × 1.5 倍）")
 print("=" * 118)
 print(pd.DataFrame(rows).to_string(index=False))
 
@@ -96,7 +96,7 @@ print("=" * 118)
 w = px.loc[JUL]
 rows = []
 for sid, nm in [("0050", "0050 (現股ETF)"), ("00981A", "00981A"), ("009816", "009816"),
-                ("2409", "群創"), ("2303", "聯電"), ("00631L", "0050正2")]:
+                ("2409", "友達"), ("2303", "聯電"), ("00631L", "0050正2")]:
     if sid not in w or w[sid].dropna().empty:
         continue
     s = w[sid].dropna()

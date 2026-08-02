@@ -76,7 +76,7 @@ i0 = idx[idx.date == "2026-06-22"].close.iloc[0]
 i1 = idx[idx.date >= "2026-06-22"].close.min()
 print(f"\n  [加權指數] 6/22 {i0:,.0f} -> 最低 {i1:,.0f} = {i1/i0-1:.1%}")
 
-print("\n  ** 若持有組合(等權: 群創/聯電/0050正2) 且用融資1.5倍 **")
+print("\n  ** 若持有組合(等權: 友達/聯電/0050正2) 且用融資1.5倍 **")
 port = []
 for sid in ("2409", "2303", "00631L"):
     g = st[st.sid == sid].sort_values("date").set_index("date").adj_close

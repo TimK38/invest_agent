@@ -1,7 +1,7 @@
 """核心＋戰術 vs 全部戰術：核心該佔多少？以及與狀態槓桿上限的衝突
 
 核心 = 現股寬基ETF(0050)，不擇時
-戰術 = 融資個股(群創+聯電 等權 × 1.5)，套用 EMA8/SMA20 出場規則
+戰術 = 融資個股(友達+聯電 等權 × 1.5)，套用 EMA8/SMA20 出場規則
 """
 import sys, pathlib
 import numpy as np, pandas as pd
