@@ -66,7 +66,8 @@ invest_agent/
 ├── market_state.py      每日：盤面狀態、槓桿上限、部位反推
 ├── portfolio_check.py   每日：持股曝險、追繳線、逐檔出場動作
 ├── positions.py         持股紀錄（成本／當初停損／融資別）單一事實來源
-├── buy_check.py         買進前檢查，可盤中用（即時價 + 既有部位曝險）
+├── buy_check.py         買進前檢查，可盤中用（即時價 + 既有部位曝險）；--asof 可重現當時判斷
+├── replay.py            交易回放：某天某價買了，之後逐日照 §6 規則會發生什麼
 ├── skill/               trade-check skill 範本（install.sh 依此產生下面兩份）
 ├── .claude/skills/      專案版 skill（相對路徑，隨倉庫散布）
 ├── fetch/               資料取得與清洗
@@ -161,6 +162,15 @@ invest_agent/
 ```bash
 for f in research/analyze*.py; do ./envest_agent/bin/python "$f"; done
 ```
+
+## 驗證過去的交易
+
+```bash
+./envest_agent/bin/python buy_check.py 3481 100 --asof 2026-06-17 --price 55   # 當時該不該買
+./envest_agent/bin/python replay.py 3481 --entry 2026-06-17 --price 55 --lots 100
+```
+
+兩者都只用指定日期（含）以前的資料，`buy_check --asof` 還會排除當時尚未建立的部位。
 
 ## 檔案保留原則
 

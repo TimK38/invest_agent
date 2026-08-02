@@ -27,8 +27,13 @@ ATR_EXTREME = 2.5
 DEFAULT_RC = 1.8          # 資料不足時的保守預設
 
 
-def taiex_state():
+def taiex_state(asof=None):
+    """asof: 只用該日（含）以前的資料，用於重現當時的判斷，避免用到未來資料"""
     d = pd.read_csv(TAIEX_RAW, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
+    if asof is not None:
+        d = d[d.date <= pd.Timestamp(asof)].reset_index(drop=True)
+        if d.empty:
+            sys.exit(f"{asof} 之前沒有大盤資料")
     c, h, l = d.close, d.high, d.low
     for n in (20, 60, 120):
         d[f"sma{n}"] = c.rolling(n).mean()

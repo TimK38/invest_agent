@@ -24,6 +24,7 @@ from portfolio_check import taiex_state, DEFAULT_RC
 
 SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
 MAINT = 1.30                                               # 融資維持率追繳線
+DEV_WARN = 4.0            # §7 急漲警示：距 SMA20 幾個 ATR（全樣本 95 百分位）
 
 
 def quote(sid):
@@ -78,6 +79,7 @@ def main():
     ap.add_argument("--stop", type=float, help="停損價；不給就用 2×ATR 與 10 日低取較近")
     ap.add_argument("--price", type=float, help="成交價；不給就抓即時價，抓不到用收盤")
     ap.add_argument("--horizon", default="波段", help="短線/波段/長線")
+    ap.add_argument("--asof", help="只用該日(含)以前的資料重現當時判斷 YYYY-MM-DD")
     ap.add_argument("--net-worth", type=float)
     profile_loader.add_arg(ap)
     a = ap.parse_args()
@@ -88,17 +90,21 @@ def main():
     mrate = cfg["margin_rate"]
     use_margin = cfg["margin_allowed"] and not a.cash
 
-    idx, ms, code = taiex_state()
+    idx, ms, code = taiex_state(a.asof)
     pos_coef = float(np.clip(1.8 / ms.atrp, 0.4, 1.0))
     lev_cap = cfg["leverage_caps"][code] * pos_coef
 
     st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    if a.asof:
+        st = st[st.date <= pd.Timestamp(a.asof)]
     mret = idx.set_index("date").ret
     g, last, rc, nsample = indicators(a.sid, st, mret)
     name = g.name.iloc[-1]
 
     if a.price:
         px, psrc = a.price, "手動指定"
+    elif a.asof:
+        px, psrc = float(last.adj_close), f"{last.name:%Y-%m-%d} 收盤（--asof 重現模式）"
     else:
         px, psrc = quote(a.sid)
         if px is None:
@@ -119,6 +125,9 @@ def main():
     ex_have = mv_have = 0.0
     same = None
     for p in store["positions"]:
+        # --asof 重現模式：當時還沒建立的部位不能算進去（否則是反向的未來資料污染）
+        if a.asof and p.get("opened") and p["opened"] > a.asof:
+            continue
         pg = st[st.sid == p["sid"]].sort_values("date")
         if pg.empty:
             continue
@@ -204,12 +213,22 @@ def main():
     # 9. 趨勢（進場理由必須是順勢事實）
     chk(px > last.sma20, f"價格 {px:.2f} {'>' if px>last.sma20 else '<'} SMA20 {last.sma20:.2f}"
                          f"{'' if px>last.sma20 else ' → 逆勢，§5 ② 進場理由不成立'}")
-
     print("\n  【檢查】")
     for m in passes:
         print(f"    ✅ {m}")
     for m in fails:
         print(f"    ❌ {m}")
+
+    # §7「不追連續急漲」是二度上車 SOP 的建議，不在 §8 絕對禁令內 → 警示，不否決。
+    # 門檻 4.0 個 ATR 約為全樣本 95 百分位；用 ATR 標準化才不會冤枉低波動標的。
+    dev_atr = (px - last.sma20) / last.atr20
+    if dev_atr > DEV_WARN:
+        print(f"\n  【警示】距 SMA20 乖離 {px/last.sma20-1:+.1%} = {dev_atr:.1f} 個 ATR "
+              f"（> {DEV_WARN:.0f}，約全樣本 95 百分位）")
+        print(f"    §7「不追連續急漲」：乖離大 → 停損遠 → 盈虧比爛。"
+              f"考慮等回檔至 SMA20/EMA21 附近，或先用 20~30% 試單。")
+        print(f"    這不是否決條件，是要你自己確認：現在進場的停損 {stop:.2f} "
+              f"（-{1-stop/px:.1%}）你接受嗎？")
 
     # 三個上限取最小 → 可買張數
     cap_risk = NW * MAX_RISK / risk_sh / 1000 if risk_sh > 0 else 0
