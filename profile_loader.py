@@ -26,7 +26,9 @@ DEFAULTS = {
 
 
 def available():
-    return sorted(p.stem for p in PROFILES.glob("*.json") if p.stem != "example")
+    # <名字>_positions.json 是 positions.py 的持股紀錄，不是設定檔
+    return sorted(p.stem for p in PROFILES.glob("*.json")
+                  if p.stem != "example" and not p.stem.endswith("_positions"))
 
 
 def load(name=None):

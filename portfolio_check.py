@@ -1,17 +1,24 @@
-"""持股組合體檢 — 曝險、有效槓桿、追繳線、逐檔停損
+"""持股組合體檢 — 曝險、有效槓桿、追繳線、逐檔出場（§6 兩條軸線）
 
 用法:
-  python portfolio_check.py --hold 00981A:50 009816:85
+  python portfolio_check.py                              # 讀 positions.py 的持股紀錄（建議）
+  python portfolio_check.py --hold 00981A:48:26.13:25.60 009816:85:14.65:14.30
   python portfolio_check.py --hold 00981A:50:26.13 --cash
-  python portfolio_check.py --profile 朋友名字 --hold 0050:20
+  python portfolio_check.py --profile 朋友名字
 
-  --hold 格式 SID:張數[:成本價]   可列多筆
-  --cash  該組持股為現股（全額自備）；預設依 profile 的 margin_allowed 判斷
+  不給 --hold 就從 profiles/<名字>_positions.json 讀，含每檔的成本、當初停損、是否融資。
+  持股用 positions.py 維護，不要每天手打。
+
+  --hold 格式 SID:張數[:成本價[:當初設定的停損價]]   可列多筆（會蓋過持股紀錄）
+          成本與停損都給 → 印出 §6 軸線一的第一目標價（盈虧比 1:2）
+          只想給停損不給成本 → 中間留空，例 00981A:48::25.60
+  --cash  該組持股為現股（全額自備）；只作用於 --hold，紀錄檔以每筆自己的設定為準
   淨資產、單筆風險 %、槓桿上限皆取自 profiles/<名字>.json
 """
 import sys, argparse
 import numpy as np, pandas as pd
 
+import positions as pos_store
 import profile_loader
 from paths import STOCKS_ADJ, TAIEX_RAW
 pd.set_option("display.width", 200)
@@ -43,7 +50,8 @@ def taiex_state():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--hold", nargs="+", required=True, metavar="SID:張數[:成本]")
+    ap.add_argument("--hold", nargs="+", metavar="SID:張數[:成本[:停損]]",
+                    help="不給就讀 positions.py 的持股紀錄")
     ap.add_argument("--net-worth", type=float, help="覆寫 profile 的淨資產")
     ap.add_argument("--cash", action="store_true", help="這批持股為現股（無融資）")
     profile_loader.add_arg(ap)
@@ -53,7 +61,6 @@ def main():
     LEV_CAP = cfg["leverage_caps"]
     MAX_RISK_PCT = cfg["max_risk_per_trade"]
     margin_rate = cfg["margin_rate"]
-    use_margin = cfg["margin_allowed"] and not a.cash
     mix = cfg.get("asset_mix") or {"stable_target": 0.72, "tolerance": 0.10, "stable_rc_max": 1.2}
 
     idx, mstate, code = taiex_state()
@@ -64,11 +71,27 @@ def main():
     st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
     mret = idx.set_index("date").ret
 
+    # 持股來源：--hold 優先，否則讀 positions.py 的紀錄（含每筆自己的融資設定）
+    if a.hold:
+        specs, src = [], "指令參數 --hold"
+        for spec in a.hold:
+            p = spec.split(":")
+            specs.append({"sid": p[0], "lots": float(p[1]),
+                          "cost": float(p[2]) if len(p) > 2 and p[2] else None,
+                          "stop": float(p[3]) if len(p) > 3 and p[3] else None,
+                          "margin": cfg["margin_allowed"] and not a.cash})
+    else:
+        store = pos_store.load(cfg)
+        specs = store["positions"]
+        src = f"持股紀錄 {pos_store.store_path(cfg).name}（更新於 {store.get('updated', '—')}）"
+        if not specs:
+            sys.exit("持股紀錄是空的。用 positions.py --add SID:張數:成本:停損 建立，"
+                     "或用 --hold 直接指定。")
+
     rows, detail = [], {}
-    for spec in a.hold:
-        parts = spec.split(":")
-        sid, lots = parts[0], float(parts[1])
-        cost = float(parts[2]) if len(parts) > 2 else None
+    for spec in specs:
+        sid, lots = spec["sid"], float(spec["lots"])
+        cost, ustop, is_margin = spec.get("cost"), spec.get("stop"), spec.get("margin", False)
         g = st[st.sid == sid].sort_values("date").set_index("date").copy()
         if g.empty:
             print(f"⚠ {sid} 無資料，請先執行: python fetch/fetch_stocks.py {sid} --since 2023-07")
@@ -76,6 +99,7 @@ def main():
         c, h, l = g.adj_close, g.adj_high, g.adj_low
         for n in (20, 60, 120):
             g[f"sma{n}"] = c.rolling(n).mean()
+        g["ema8"] = c.ewm(span=8, adjust=False).mean()      # §6 軸線二：跌破出 1/2
         g["ema21"] = c.ewm(span=21, adjust=False).mean()
         tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
         g["atr20"] = tr.rolling(20).mean()
@@ -94,22 +118,23 @@ def main():
         r = g.iloc[-1]
         mv = lots * 1000 * r.adj_close
         # §4 資產結構分類：風險係數 ≤ 門檻 且 未使用融資 → 穩健，其餘皆為積極
-        klass = "穩健" if (rc <= mix["stable_rc_max"] and not use_margin) else "積極"
-        detail[sid] = (g, r, rc, cost)
+        klass = "穩健" if (rc <= mix["stable_rc_max"] and not is_margin) else "積極"
+        detail[sid] = (g, r, rc, cost, ustop, lots, is_margin)
         rows.append({"標的": f"{sid} {g.name.iloc[-1]}", "類別": klass, "張數": lots,
+                     "資": "融" if is_margin else "現",
                      "收盤": r.adj_close, "市值": mv, "風險係數": round(rc, 2), "曝險": mv * rc,
-                     "距高點": f"{r.dd:.1%}", "S20": "▲" if r.adj_close > r.sma20 else "▼",
+                     "距高點": f"{r.dd:.1%}", "E8": "▲" if r.adj_close > r.ema8 else "▼",
+                     "S20": "▲" if r.adj_close > r.sma20 else "▼",
                      "S60": "▲" if r.adj_close > r.sma60 else "▼", "樣本": len(j), "備註": note})
 
     if not rows:
         sys.exit("沒有可分析的持股")
     D = pd.DataFrame(rows)
     mv_tot, ex_tot = D.市值.sum(), D.曝險.sum()
-    margin = mv_tot * margin_rate if use_margin else 0.0
+    margin = D[D.資 == "融"].市值.sum() * margin_rate
 
     print("=" * 80)
-    print(f"  設定檔 {cfg['_name']}   淨資產 {NW:,.0f}   "
-          f"融資 {'可用' if cfg['margin_allowed'] else '不使用'}")
+    print(f"  設定檔 {cfg['_name']}   淨資產 {NW:,.0f}   持股來源：{src}")
     print(f"  盤面（{mstate.date:%Y-%m-%d}）  狀態【{code}】  加權 {mstate.close:,.0f}  "
           f"距高點 {mstate.dd:.1%}  ATR% {mstate.atrp:.2f}")
     print(f"  有效槓桿上限 {LEV_CAP[code]} × 波動係數 {pos_coef:.2f} = 【{target_lev:.2f} 倍】"
@@ -150,28 +175,55 @@ def main():
 
     if margin:
         print("\n  ── 融資追繳線（維持率 130%）" + "─" * 46)
-        for sid, (g, r, rc, cost) in detail.items():
-            call = r.adj_close * 1.30 * margin_rate
+        for sid, (g, r, rc, cost, ustop, lots, is_margin) in detail.items():
+            if not is_margin:
+                continue
+            call = (cost or r.adj_close) * 1.30 * margin_rate
             print(f"    {sid:8s} 現價 {r.adj_close:7.2f}   追繳 {call:7.2f}（-{1-call/r.adj_close:.0%}）"
                   f"   ATR {r.atr20:.2f}/日 → 約 {(r.adj_close-call)/r.atr20:.1f} 個 ATR")
 
-    print("\n  ── 逐檔停損與動作 " + "─" * 54)
-    for sid, (g, r, rc, cost) in detail.items():
+    print("\n  ── 逐檔出場（§6 兩條軸線，取先觸發者；每日收盤判定）" + "─" * 22)
+    for sid, (g, r, rc, cost, ustop, lots, is_margin) in detail.items():
         stop = max(r.adj_close - 2 * r.atr20, g.adj_close.tail(10).min() * 0.99)
         risk_sh = r.adj_close - stop
         max_lots = NW * MAX_RISK_PCT / risk_sh / 1000 if risk_sh > 0 else 0
-        lots = float([s for s in a.hold if s.startswith(sid + ":")][0].split(":")[1])
-        broke = r.adj_close < r.sma20
+        # §6 軸線一第一階：盈虧比 1:2 的目標價，需成本與當初停損才算得出來
+        tgt1 = cost + 2 * (cost - ustop) if (cost and ustop and cost > ustop) else None
+
         print(f"\n    ◆ {sid} {g.name.iloc[-1]}   {lots:g} 張 @ {r.adj_close:.2f}"
               + (f"   成本 {cost:.2f}（損益 {r.adj_close/cost-1:+.1%}）" if cost else ""))
         s120 = f"  SMA120 {r.sma120:.2f} {'▲' if r.adj_close>r.sma120 else '▼'}" if not np.isnan(r.sma120) else "  SMA120 樣本不足"
-        print(f"        SMA20 {r.sma20:.2f} {'▲' if r.adj_close>r.sma20 else '▼'}   "
+        print(f"        EMA8 {r.ema8:.2f} {'▲' if r.adj_close>r.ema8 else '▼'}   "
+              f"SMA20 {r.sma20:.2f} {'▲' if r.adj_close>r.sma20 else '▼'}   "
               f"SMA60 {r.sma60:.2f} {'▲' if r.adj_close>r.sma60 else '▼'}   "
               f"EMA21 {r.ema21:.2f} {'▲' if r.adj_close>r.ema21 else '▼'}{s120}")
-        print(f"        停損 {stop:.2f}（-{1-stop/r.adj_close:.1%}）   "
+        if ustop:
+            tight = (r.adj_close - ustop) / r.atr20
+            print(f"        當初停損 {ustop:.2f}（距現價 -{1-ustop/r.adj_close:.1%}，{tight:.2f} 個 ATR）"
+                  + ("   ⚠ 不足 2 ATR，落在雜訊內" if tight < 2 else ""))
+        print(f"        建議停損 {stop:.2f}（-{1-stop/r.adj_close:.1%}；2×ATR 與 10 日低取較近）   "
               f"風險{MAX_RISK_PCT:.1%}反推上限 {max_lots:.0f} 張，現有 {lots:g} 張 "
               f"{'❌ 超過' if lots > max_lots else '✅'}")
-        print(f"        ▶ {'跌破 SMA20 → 依 §5 全部出清' if broke else '仍在 SMA20 之上 → 續抱，停損上移'}")
+        if tgt1:
+            print(f"        第一目標 {tgt1:.2f}（盈虧比 1:2，成本 +{tgt1/cost-1:.1%}）   "
+                  + ("✅ 已達" if r.adj_close >= tgt1 else f"尚差 {tgt1/r.adj_close-1:+.1%}"))
+        elif cost:
+            print(f"        第一目標 無法計算 → 補上當初停損價：--hold {sid}:{lots:g}:{cost:.2f}:<停損>")
+
+        if ustop and r.adj_close < ustop:
+            act = f"❗ 跌破當初停損 {ustop:.2f} → 全部出清（不討論、不等反彈）"
+        elif r.adj_close < r.sma20:
+            act = f"❗ 收盤跌破 SMA20 {r.sma20:.2f} → 全部出清（軸線二）"
+        elif r.adj_close < r.ema8:
+            act = f"⚠ 收盤跌破 EMA8 {r.ema8:.2f}（仍在 SMA20 之上）→ 出 1/2（軸線二）"
+        elif tgt1 and r.adj_close >= tgt1:
+            act = f"達第一目標 {tgt1:.2f} → 賣 30%，停損上移至成本 {cost:.2f}（軸線一）"
+        else:
+            act = "續抱。停損只能往上移，永遠不能往下移"
+        print(f"        ▶ {act}")
+    if code in "CD":
+        print(f"\n    ※ 大盤為 {code} 狀態：不論個股訊號，總曝險須先降至 {target_lev:.2f} 倍以內，"
+              f"且融資餘額須為 0")
     print()
 
 
