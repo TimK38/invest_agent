@@ -1,0 +1,23 @@
+{
+  "name": "範例（複製這份成 profiles/你的名字.json）",
+  "net_worth": 0,
+  "margin_allowed": false,
+  "margin_rate": 0.6,
+  "max_risk_per_trade": 0.01,
+  "leverage_caps": {
+    "A": 1.0,
+    "B": 0.8,
+    "C": 0.3,
+    "D": 0.0
+  },
+  "instruments": [
+    "0050",
+    "2330"
+  ],
+  "notes": "寫下你自己的交易弱點，Claude 每次檢查時會特別盯這幾點。例如：容易追高、虧損時不停損、喜歡攤平。",
+  "asset_mix": {
+    "stable_target": 0.72,
+    "tolerance": 0.1,
+    "stable_rc_max": 1.2
+  }
+}
