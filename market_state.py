@@ -99,8 +99,9 @@ def classify(r):
 
     if r.close < r.sma60:
         reasons.append(f"收盤 {r.close:,.0f} < SMA60 {r.sma60:,.0f}")
-    if r.atrp > ATR_EXTREME:
-        reasons.append(f"ATR% {r.atrp:.2f} > {ATR_EXTREME}")
+    # v1.7：波動警訊加上價格確認 —— ATR 不分方向，急漲一樣把它推高
+    if r.atrp > ATR_EXTREME and r.close < r.sma20:
+        reasons.append(f"ATR% {r.atrp:.2f} > {ATR_EXTREME} 且 收盤跌破 SMA20 {r.sma20:,.0f}")
     if r.dd <= DD_LOCK:
         reasons.append(f"距高點 {r.dd:.1%} ≤ {DD_LOCK:.0%}")
     if reasons:
@@ -178,8 +179,10 @@ def main():
     print(f"  ▶ 單筆最大虧損   淨資產 × {MAX_RISK_PCT:.1%}")
 
     # 再進場訊號
-    sig = (r.close > r.sma20) and (r.close > r.sma60) and (r.atrp < ATR_EXTREME)
-    print(f"\n  ▶ 再進場訊號（收盤>SMA20 且 >SMA60 且 ATR%<{ATR_EXTREME}）: "
+    # v1.7：訊號本身就要求收盤 > SMA20，波動警訊（需 收<SMA20）自動不成立 → ATR 條件消失。
+    # §7 的表格本來就顯示「站回SMA20 且 在SMA60之上」勝率最高，加 ATR 條件並未改善。
+    sig = (r.close > r.sma20) and (r.close > r.sma60)
+    print(f"\n  ▶ 再進場訊號（收盤>SMA20 且 >SMA60）: "
           f"{'✅ 成立 — 可建 1/3 部位' if sig else '❌ 不成立'}")
     if not sig:
         need = []
@@ -187,9 +190,14 @@ def main():
             need.append(f"站回 SMA20 {r.sma20:,.0f}")
         if r.close <= r.sma60:
             need.append(f"站回 SMA60 {r.sma60:,.0f}")
-        if r.atrp >= ATR_EXTREME:
-            need.append(f"ATR% 收斂至 {ATR_EXTREME} 以下（現 {r.atrp:.2f}）")
         print(f"      待滿足：{'、'.join(need)}")
+    if r.atrp > ATR_EXTREME:
+        if r.close < r.sma20:
+            print(f"      ⚠ ATR% {r.atrp:.2f} > {ATR_EXTREME} 且收盤在 SMA20 之下 → 波動警訊成立，"
+                  f"§8 禁令 3：禁止新增融資")
+        else:
+            print(f"      ℹ ATR% {r.atrp:.2f} > {ATR_EXTREME}，但收盤仍在 SMA20 之上 → "
+                  f"視為順勢波動，不構成警訊（v1.7）")
 
     if cfg["notes"]:
         print(f"\n  ▶ 你的個人弱點提醒\n      {cfg['notes']}")

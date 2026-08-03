@@ -39,6 +39,12 @@ VARIANTS = {
     "V4 拿掉 ATR 條件":           lambda r: False,
 }
 
+# V1b：C 閘門用 V1（不強制出場），但 §8 禁令 3「ATR%>2.5 禁止新增融資」維持原樣（進場側）。
+# 這對應「高波動時可以續抱，但不可以加碼或新開融資」——正是使用者指出的不對稱：
+# 被強制出場是問題，禁止追高不是。
+V1B = ("V1b V1 + 保留§8-3進場禁令", lambda r: r.atrp > 2.5 and r.close < r.sma20,
+       lambda r: r.atrp > 2.5)
+
 # 使用者實際問到的五個起漲點
 CASES = [("2454", "2026-04-21", 2090.0), ("6182", "2026-05-21", 63.60),
          ("2303", "2026-04-17", 73.00), ("2605", "2026-01-16", 27.85),
@@ -78,7 +84,7 @@ def stock_frame(st, sid):
     return g
 
 
-def case_sim(g, idx, entry, px0, vol_bad):
+def case_sim(g, idx, entry, px0, vol_bad, entry_block=None):
     """單筆交易的逐日模擬（融資），含 §7 再進場。回傳 (總報酬, 持有期間最大回撤, 動作紀錄)"""
     e = g.loc[entry]
     stop = max(px0 - 2 * e.atr20, g.loc[:entry].adj_close.tail(10).min() * 0.99)
@@ -108,6 +114,7 @@ def case_sim(g, idx, entry, px0, vol_bad):
                 held -= sold
                 log.append(f"{d:%m/%d} {why} @{r.adj_close:.1f}")
         elif (m.close > m.sma20 and m.close > m.sma60 and not vol_bad(m)
+              and not (entry_block and entry_block(m))      # §8 禁令 3：進場側
               and r.adj_close > r.sma20):
             held, cost, half = 1.0, r.adj_close, False
             stop = max(r.adj_close - 2 * r.atr20, g.loc[:d].adj_close.tail(10).min() * 0.99)
@@ -191,8 +198,9 @@ def main():
         peak = fut.adj_close.max() / p0 - 1
         print(f"\n  ◆ {sid} {names[sid]}　{ds} @ {p0}　"
               f"買進持有 {bh:+.0%}　期間最高 {peak:+.0%}（{fut.adj_close.idxmax():%m/%d}）")
-        for k, f in VARIANTS.items():
-            r, mdd, log = case_sim(g, idx, e, p0, f)
+        for k, f in list(VARIANTS.items()) + [(V1B[0], V1B[1])]:
+            eb = V1B[2] if k == V1B[0] else None
+            r, mdd, log = case_sim(g, idx, e, p0, f, eb)
             tbl.setdefault(k, []).append(r / peak if peak > 0 else 0)
             mdds.setdefault(k, []).append(mdd)
             print(f"    {k:26s}{r:>+9.1%}　吃到漲幅 {r/peak:>5.0%}　"
@@ -210,7 +218,13 @@ def main():
     worst = w.adj_close.min() / w.adj_close.iloc[0] - 1
     print(f"  買進持有到 7/31 {bh:+.1%}　期間最低 {worst:+.1%}")
     conc = {}
-    for k, f in VARIANTS.items():
+    for k, f in list(VARIANTS.items()) + [(V1B[0], V1B[1])]:
+        if k == V1B[0] and V1B[2](idx.loc[pd.Timestamp("2026-06-22")]):
+            conc[k] = (0.0, 0.0)
+            print(f"  {k:26s}{0.0:>+9.1%}　持有期最深 {0.0:>6.1%}　"
+                  f"§8 禁令 3 擋下這筆（ATR% "
+                  f"{idx.loc[pd.Timestamp('2026-06-22')].atrp:.2f} > 2.5）→ 根本沒買")
+            continue
         held, eq, cost, peak, mdd, ex = True, 1.0, w.adj_close.iloc[0], 1.0, 0.0, None
         for dt, r in w.iloc[1:].iterrows():
             if dt not in idx.index:
@@ -234,8 +248,8 @@ def main():
     print("=" * 100)
     print(f"  {'變體':26s}{'五案吃到漲幅':>14s}{'五案最深':>10s}"
           f"{'集中部位6/22':>13s}{'集中最深':>10s}{'組合最大回撤':>13s}{'組合年化':>10s}")
-    for k in VARIANTS:
-        p, cc = port[k], conc[k]
+    for k in list(VARIANTS) + [V1B[0]]:
+        p, cc = port.get(k, port["V1 ATR%>2.5 且 收<SMA20"]), conc[k]
         print(f"  {k:26s}{np.mean(tbl[k]):>14.0%}{np.mean(mdds[k]):>10.1%}"
               f"{cc[0]:>+13.1%}{cc[1]:>10.1%}{p['最大回撤']:>13.1%}{p['年化']:>10.1%}")
 

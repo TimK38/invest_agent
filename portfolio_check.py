@@ -28,6 +28,17 @@ ATR_EXTREME = 2.5
 DEFAULT_RC = 1.8          # 資料不足時的保守預設
 
 
+def vol_warning(r):
+    """§2 的波動警訊（v1.7 起加上價格確認）
+
+    ATR% 高於門檻**且**收盤跌破 SMA20 才算警訊。ATR 不分方向——急漲一樣把它推高，
+    舊版只看 ATR% 會把「漲得太快」與「要崩了」判成同一件事。
+    實測（research/analyze9_atr_gate.py）：ATR%>2.5 獨自觸發 C 的 42 天全落在
+    「波動高但價格沒壞」，代價是漲幅捕捉從 62% 掉到 43%。
+    """
+    return r.atrp > ATR_EXTREME and r.close < r.sma20
+
+
 def taiex_state(asof=None):
     """asof: 只用該日（含）以前的資料，用於重現當時的判斷，避免用到未來資料"""
     d = pd.read_csv(TAIEX_RAW, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
@@ -45,7 +56,7 @@ def taiex_state(asof=None):
     r = d.iloc[-1]
     if r.close < r.sma120 or r.dd <= -0.12:
         code = "D"
-    elif r.close < r.sma60 or r.atrp > ATR_EXTREME or r.dd <= -0.08:
+    elif r.close < r.sma60 or vol_warning(r) or r.dd <= -0.08:
         code = "C"
     elif r.close < r.sma20:
         code = "B"

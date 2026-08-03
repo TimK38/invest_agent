@@ -20,7 +20,7 @@ import numpy as np, pandas as pd
 import positions as pos_store
 import profile_loader
 from paths import STOCKS_ADJ
-from portfolio_check import taiex_state, DEFAULT_RC
+from portfolio_check import taiex_state, DEFAULT_RC, vol_warning
 
 SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
 MAINT = 1.30                                               # 融資維持率追繳線
@@ -206,8 +206,14 @@ def main():
         passes.append("新標的，非攤平")
     # 7/8. 波動與回撤下的融資禁令
     if use_margin:
-        chk(ms.atrp <= 2.5, f"ATR% {ms.atrp:.2f} {'≤' if ms.atrp <= 2.5 else '>'} 2.5"
-                            + ("" if ms.atrp <= 2.5 else " → 禁止新增融資"))
+        # §8 禁令 3（v1.7）：與 §2 的 C 閘門用同一個波動警訊定義，兩處必須一致，
+        # 否則「不強制出場但也不准回補」，放寬的效果會被進場側抵銷掉一半。
+        vw = vol_warning(ms)
+        chk(not vw, f"ATR% {ms.atrp:.2f}"
+                    + (f" > 2.5 但收盤 {ms.close:,.0f} 仍在 SMA20 {ms.sma20:,.0f} 之上"
+                       "（順勢波動，非警訊）" if ms.atrp > 2.5 and not vw else "")
+                    + (" > 2.5 且收盤跌破 SMA20 → 禁止新增融資" if vw else
+                       (" ≤ 2.5" if ms.atrp <= 2.5 else "")))
         chk(ms.dd > -0.10, f"大盤距高點 {ms.dd:.1%}"
                            + ("" if ms.dd > -0.10 else " → 回撤 >10%，融資餘額須為 0"))
     # 9. 趨勢（進場理由必須是順勢事實）
