@@ -127,11 +127,18 @@ invest_agent/
 ## 新增標的
 
 ```bash
-./envest_agent/bin/python fetch/fetch_stocks.py 2454 00981A --since 2023-07
-./envest_agent/bin/python fetch/clean_stocks.py      # 補完一定要跑，處理分割與減資
+# 新標的（上市或上櫃都行，會自動判斷）
+./envest_agent/bin/python fetch/fetch_stocks.py 2454 6182 --since 2023-07
+
+# 更新既有標的：每檔各自從自己最後一筆補到現在，不會留空洞
+./envest_agent/bin/python fetch/fetch_stocks.py
+
+./envest_agent/bin/python fetch/clean_stocks.py      # 補完一定要跑，還原分割與減資
 ```
 
 資料會**併入** `data/stocks_daily.csv`，不會產生新檔案。
+執行後會列出**缺漏檢查**（以大盤交易日為基準），區分「抓取失敗」與「真停牌」——
+前者要補抓，後者由 `clean_stocks.py` 自動還原。交易所改名（如 00631L）也會自動統一。
 
 > ⚠ TWSE 的 `STOCK_DAY` 回傳**未還原權值的原始價**。0050 於 2025-06-18 分割 1:4、
 > 00631L 於 2026-03-31 分割約 1:22，不還原會得到「0050 三年報酬 -21%」這種荒謬結果。

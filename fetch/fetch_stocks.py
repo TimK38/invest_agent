@@ -1,9 +1,12 @@
 """爬個股/ETF 日線，增量併入 data/stocks_daily.csv（單一檔案，用 sid 區分）
 
 用法:
-  python fetch/fetch_stocks.py                    # 更新檔案內既有標的（最近 2 個月）
-  python fetch/fetch_stocks.py 2454 00981A        # 新增/更新指定標的（最近 2 個月）
-  python fetch/fetch_stocks.py 2454 --since 2023-07   # 指定起始年月，初次建檔用
+  python fetch/fetch_stocks.py                    # 更新檔案內既有標的
+  python fetch/fetch_stocks.py 2454 00981A        # 新增/更新指定標的
+  python fetch/fetch_stocks.py 2454 --since 2023-07   # 指定起始年月，新標的建檔用
+
+不給 --since 時，**每檔各自從自己最後一筆資料那個月補到現在**（至少涵蓋最近兩個月），
+所以隔了幾個月沒更新也不會留下空洞。執行完會列出缺漏檢查。
 
 標的名稱自動從回傳的 title 取得，不需手動維護對照表。
 **上市（TWSE）抓不到時會自動改抓上櫃（TPEx）**——例如合晶 6182 是上櫃股。
@@ -15,7 +18,7 @@ import requests
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import STOCKS_RAW
+from paths import STOCKS_RAW, TAIEX_RAW
 
 S = requests.Session()
 S.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
@@ -110,19 +113,28 @@ def main():
         sys.exit("沒有指定標的，且 data/stocks_daily.csv 不存在")
 
     today = date.today()
-    if a.since:
-        y, m = map(int, a.since.split("-"))
-        rng = ((y, m), (today.year, today.month))
-    else:
-        y, m = today.year, today.month - 1
-        if m < 1:
-            m, y = 12, y - 1
-        rng = ((y, m), (today.year, today.month))
+    m0 = today.month - 1 or 12
+    y0 = today.year if today.month > 1 else today.year - 1
+    default_rng = ((y0, m0), (today.year, today.month))
+    last = (old.groupby("sid").date.max().to_dict() if len(old) else {})
+
+    def range_for(sid):
+        """不給 --since 時，從該檔**最後一筆資料那個月**補到現在，而不是固定抓兩個月。
+        否則某檔隔了幾個月沒更新就會留下空洞，而 clean_stocks.py 會把空洞誤判成停牌。"""
+        if a.since:
+            y, m = map(int, a.since.split("-"))
+            return ((y, m), (today.year, today.month))
+        ld = last.get(sid)
+        if ld is None or pd.isna(ld):
+            return default_rng
+        return (min((ld.year, ld.month), default_rng[0]), (today.year, today.month))
 
     frames = []
     for sid in sids:
+        rng = range_for(sid)
         rows, name = fetch_one(sid, rng)
-        print(f"  {sid:8s} {name:16s} {len(rows):5d} 列", flush=True)
+        print(f"  {sid:8s} {name:16s} {len(rows):5d} 列"
+              f"   （{rng[0][0]}-{rng[0][1]:02d} 起）", flush=True)
         if rows:
             frames.append(pd.DataFrame(rows))
 
@@ -134,12 +146,40 @@ def main():
     n0 = len(old)
     df = (pd.concat([old, new[cols]]) if n0 else new[cols])
     df = df.drop_duplicates(["sid", "date"], keep="last").sort_values(["sid", "date"]).reset_index(drop=True)
+    # 名稱統一用最新的一筆：交易所會改名（00631L 由「0050正2」改為「元大台灣50正2」），
+    # 若不統一，同一個 sid 會在 groupby 出現兩列，後續依名稱做的比對也會錯。
+    latest = df.groupby("sid").name.last()
+    renamed = [(s, n) for s, n in df.groupby("sid").name.unique().items() if len(n) > 1]
+    df["name"] = df.sid.map(latest)
+    for s, ns in renamed:
+        print(f"  ℹ {s} 名稱曾變更 {list(ns)} → 統一為「{latest[s]}」")
     df.to_csv(STOCKS_RAW, index=False)
 
     print(f"\n原有 {n0} 列 → 更新後 {len(df)} 列（新增 {len(df)-n0}）")
     print(df.groupby(["sid", "name"]).agg(列數=("close", "size"), 起=("date", "min"),
                                           迄=("date", "max")).to_string())
-    print("\n※ 若標的曾發生股票分割，記得重跑：python fetch/clean_stocks.py")
+
+    # 缺漏檢查：以大盤交易日為基準，列出每檔在自己上市期間內漏掉的日子。
+    # clean_stocks.py 用「大盤有交易而該檔沒有」判定停牌，抓取空洞會被誤判成停牌，
+    # 那天的真實報酬會被大盤報酬取代 —— 所以這裡一定要把空洞跟真停牌分開列出來。
+    if TAIEX_RAW.exists():
+        sess = pd.read_csv(TAIEX_RAW, parse_dates=["date"]).date
+        print("\n  ── 缺漏檢查（以大盤交易日為基準）" + "─" * 40)
+        clean = True
+        for sid, g in df.groupby("sid"):
+            span = sess[(sess >= g.date.min()) & (sess <= g.date.max())]
+            miss = sorted(set(span) - set(g.date))
+            if miss:
+                clean = False
+                months = sorted({f"{d:%Y-%m}" for d in miss})
+                print(f"    {sid:8s} 缺 {len(miss):3d} 天　{months[0]}~{months[-1]}"
+                      f"　例：{miss[0]:%Y-%m-%d}")
+                print(f"      → 若是抓取失敗請補：fetch_stocks.py {sid} --since {months[0]}")
+                print(f"        若確認是停牌（減資/分割換發新股），clean_stocks.py 會自動還原")
+        if clean:
+            print("    ✅ 每檔在自己的上市期間內都沒有缺漏")
+
+    print("\n※ 補完資料一定要重跑：python fetch/clean_stocks.py（還原分割與減資）")
 
 
 if __name__ == "__main__":
