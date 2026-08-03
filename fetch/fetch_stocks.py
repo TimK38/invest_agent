@@ -5,7 +5,9 @@
   python fetch/fetch_stocks.py 2454 00981A        # 新增/更新指定標的（最近 2 個月）
   python fetch/fetch_stocks.py 2454 --since 2023-07   # 指定起始年月，初次建檔用
 
-標的名稱自動從 TWSE 回傳的 title 取得，不需手動維護對照表。
+標的名稱自動從回傳的 title 取得，不需手動維護對照表。
+**上市（TWSE）抓不到時會自動改抓上櫃（TPEx）**——例如合晶 6182 是上櫃股。
+兩邊的成交量單位不同（TWSE 給股數、TPEx 給張數），已在 fetch_otc 內統一為股數。
 """
 import time, sys, re, argparse, pathlib
 from datetime import date
@@ -18,6 +20,7 @@ from paths import STOCKS_RAW
 S = requests.Session()
 S.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
 URL = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={ym}01&stockNo={sid}&response=json"
+OTC_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"   # 上櫃
 
 
 def months(start, end):
@@ -43,29 +46,55 @@ def parse_name(title, sid):
     return m.group(1).strip() if m else sid
 
 
+def fetch_otc(sid, ym):
+    """櫃買中心（上櫃股）。欄位：日期 成交張數 成交仟元 開 高 低 收 漲跌 筆數
+    成交量單位是**張**，這裡乘 1000 換成股數，與 TWSE 一致。"""
+    r = S.get(OTC_URL, params={"code": sid, "date": f"{ym[:4]}/{ym[4:]}/01",
+                               "id": "", "response": "json"}, timeout=20)
+    j = r.json()
+    if j.get("stat") != "ok" or not j.get("tables"):
+        return [], None
+    out = []
+    for d in j["tables"][0].get("data") or []:
+        y, m, dd = d[0].split("/")
+        out.append({"sid": sid, "date": date(int(y) + 1911, int(m), int(dd)),
+                    "vol": num(d[1]) * 1000, "open": num(d[3]), "high": num(d[4]),
+                    "low": num(d[5]), "close": num(d[6])})
+    return out, (j.get("name") or "").strip() or None
+
+
 def fetch_one(sid, rng):
-    rows, name = [], sid
+    rows, name, otc = [], sid, False
     for ym in months(*rng):
         for attempt in range(3):
             try:
-                r = S.get(URL.format(ym=ym, sid=sid), timeout=20)
-                if r.status_code == 200:
-                    j = r.json()
-                    if j.get("stat") == "OK":
-                        name = parse_name(j.get("title", ""), sid)
-                        for d in j["data"]:
-                            y, m, dd = d[0].split("/")
-                            rows.append({"sid": sid, "date": date(int(y) + 1911, int(m), int(dd)),
-                                         "vol": num(d[1]), "open": num(d[3]), "high": num(d[4]),
-                                         "low": num(d[5]), "close": num(d[6])})
-                    break          # stat 非 OK = 該月無資料(未上市/停牌)，正常跳過
+                got = []
+                if not otc:
+                    r = S.get(URL.format(ym=ym, sid=sid), timeout=20)
+                    if r.status_code == 200:
+                        j = r.json()
+                        if j.get("stat") == "OK":
+                            name = parse_name(j.get("title", ""), sid)
+                            for d in j["data"]:
+                                y, m, dd = d[0].split("/")
+                                got.append({"sid": sid,
+                                            "date": date(int(y) + 1911, int(m), int(dd)),
+                                            "vol": num(d[1]), "open": num(d[3]), "high": num(d[4]),
+                                            "low": num(d[5]), "close": num(d[6])})
+                # 上市查無資料 → 改查上櫃。一旦確認是上櫃股，後續月份直接走 TPEx
+                if not got:
+                    got, oname = fetch_otc(sid, ym)
+                    if got:
+                        otc, name = True, (oname or name)
+                rows.extend(got)
+                break          # 兩邊都無資料 = 該月未上市/停牌，正常跳過
             except Exception as e:
                 print(f"  {sid} {ym} {type(e).__name__}", file=sys.stderr)
                 time.sleep(4 * (attempt + 1))
         time.sleep(2.2)
     for r in rows:
         r["name"] = name
-    return rows, name
+    return rows, (name + "(上櫃)" if otc else name)
 
 
 def main():
