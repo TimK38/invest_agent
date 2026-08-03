@@ -18,9 +18,10 @@ import sys, pathlib
 import numpy as np, pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import STOCKS_RAW, STOCKS_ADJ, TAIEX_RAW
+from paths import STOCKS_RAW, ETF_RAW, PRICES_ADJ, TAIEX_RAW, is_etf
 
-st = pd.read_csv(STOCKS_RAW, parse_dates=["date"], dtype={"sid": str})
+st = pd.concat([pd.read_csv(f, parse_dates=["date"], dtype={"sid": str})
+                for f in (STOCKS_RAW, ETF_RAW) if f.exists()])
 idx = pd.read_csv(TAIEX_RAW, parse_dates=["date"]).set_index("date").close
 LEV = {"00631L": 2.0}          # 槓桿型 ETF 的倍數，其餘視為 1.0
 SESSIONS = idx.index           # 大盤交易日，用來判定個股停牌
@@ -57,8 +58,9 @@ for sid, g in st.groupby("sid"):
     out.append(g)
 
 df = pd.concat(out).sort_values(["sid", "date"])
-df.to_csv(STOCKS_ADJ, index=False)
-print(f"\n還原完成 {len(df)} 筆 -> {STOCKS_ADJ}")
+df["kind"] = np.where(df.sid.map(is_etf), "ETF", "個股")
+df.to_csv(PRICES_ADJ, index=False)
+print(f"\n還原完成 {len(df)} 筆 -> {PRICES_ADJ}")
 chk = df.groupby(["sid", "name"]).apply(lambda x: pd.Series({
     "期間": f"{x.date.min():%Y-%m}~{x.date.max():%Y-%m}",
     "報酬(還原後)": f"{x.adj_close.iloc[-1]/x.adj_close.iloc[0]-1:+.0%}",

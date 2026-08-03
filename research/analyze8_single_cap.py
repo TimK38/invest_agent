@@ -22,7 +22,7 @@ import sys, pathlib
 import numpy as np, pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import STOCKS_ADJ, TAIEX_RAW
+from paths import PRICES_ADJ, TAIEX_RAW
 
 LEV_CAP = {"A": 1.5, "B": 1.0, "C": 0.5, "D": 0.0}
 CAPS = [0.10, 0.15, 0.20, 0.25, 0.33, 0.50, 1.00]     # 待測的單一標的上限
@@ -54,7 +54,7 @@ def taiex_series():
 
 def main():
     idx = taiex_series()
-    st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
     # 只用全歷史標的，避免上市時間差造成的存活偏誤
     full = [s for s, g in st.groupby("sid") if len(g) > 700]
     px = st[st.sid.isin(full)].pivot(index="date", columns="sid", values="adj_close").sort_index()

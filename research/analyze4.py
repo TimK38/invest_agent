@@ -2,11 +2,11 @@
 import numpy as np, pandas as pd
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import TAIEX_RAW, TAIEX_ENRICHED, STOCKS_ADJ, STOCKS_RAW
+from paths import TAIEX_RAW, TAIEX_ENRICHED, PRICES_ADJ, STOCKS_RAW
 pd.set_option("display.width", 200)
 
 idx = pd.read_csv(TAIEX_ENRICHED, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
-st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"])
+st = pd.read_csv(PRICES_ADJ, parse_dates=["date"])
 mkt = idx.set_index("date")
 
 print("=" * 80); print("【A】0050正2 耗損 — 用『合成2倍』對照(正確算法)"); print("=" * 80)

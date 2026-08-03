@@ -20,7 +20,7 @@ import argparse, sys
 import numpy as np, pandas as pd
 
 import profile_loader
-from paths import STOCKS_ADJ
+from paths import PRICES_ADJ
 from portfolio_check import taiex_state, DEFAULT_RC
 
 MAINT = 1.30
@@ -45,7 +45,7 @@ def main():
     use_margin = cfg["margin_allowed"] and not a.cash
     entry = pd.Timestamp(a.entry)
 
-    st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
     g = st[st.sid == a.sid].sort_values("date").set_index("date").copy()
     if g.empty:
         sys.exit(f"{a.sid} 無資料")

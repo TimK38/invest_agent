@@ -5,7 +5,7 @@
 import numpy as np, pandas as pd
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import TAIEX_RAW, TAIEX_ENRICHED, STOCKS_ADJ, STOCKS_RAW
+from paths import TAIEX_RAW, TAIEX_ENRICHED, PRICES_ADJ, STOCKS_RAW
 pd.set_option("display.width", 220)
 
 df = pd.read_csv(TAIEX_ENRICHED, parse_dates=["date"]).sort_values("date").reset_index(drop=True)

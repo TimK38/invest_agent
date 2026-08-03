@@ -2,11 +2,11 @@
 import numpy as np, pandas as pd
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import TAIEX_RAW, TAIEX_ENRICHED, STOCKS_ADJ, STOCKS_RAW
+from paths import TAIEX_RAW, TAIEX_ENRICHED, PRICES_ADJ, STOCKS_RAW
 pd.set_option("display.width", 220)
 
 idx = pd.read_csv(TAIEX_ENRICHED, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
-st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"])
+st = pd.read_csv(PRICES_ADJ, parse_dates=["date"])
 mkt = idx.set_index("date")[["close", "ret", "dd", "atrp", "sma20", "sma60", "sma120"]].rename(columns={"close": "idx_close", "ret": "idx_ret"})
 
 print("=" * 84); print("【A】實測 Beta 與波動 — 直接拿去算你的有效槓桿"); print("=" * 84)

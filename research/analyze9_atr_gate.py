@@ -26,7 +26,7 @@ import sys, pathlib
 import numpy as np, pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import STOCKS_ADJ, TAIEX_RAW
+from paths import PRICES_ADJ, TAIEX_RAW
 
 LEV_CAP = {"A": 1.5, "B": 1.0, "C": 0.5, "D": 0.0}
 RC_REFRESH, MIN_OBS = 21, 60
@@ -126,7 +126,7 @@ def case_sim(g, idx, entry, px0, vol_bad, entry_block=None):
 
 def main():
     idx = market()
-    st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
     full = [s for s, g in st.groupby("sid") if len(g) > 700]
     px = st[st.sid.isin(full)].pivot(index="date", columns="sid", values="adj_close").sort_index()
     ret, sma20 = px.pct_change(), px.rolling(20).mean()

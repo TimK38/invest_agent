@@ -73,10 +73,11 @@ invest_agent/
 ├── fetch/               資料取得與清洗
 ├── research/            門檻推導過程（每季重跑驗證，不要刪）
 ├── data/                ← 本機生成，不隨倉庫散布（install.sh 會建檔）
-│   ├── taiex_daily.csv       大盤原始價量（逐日累積，重爬成本高）
-│   ├── stocks_daily.csv      所有個股/ETF 原始價量（用 sid 區分）
+│   ├── taiex_daily.csv       大盤：加權指數原始價量（逐日累積，重爬成本高）
+│   ├── stocks_daily.csv      個股：原始價量
+│   ├── etf_daily.csv         ETF：原始價量（代號以 00 開頭者）
 │   ├── taiex_enriched.csv    衍生：由 research/analyze.py 產生
-│   └── stocks_adj.csv        衍生：由 fetch/clean_stocks.py 產生（分割還原）
+│   └── prices_adj.csv        衍生：個股+ETF 合併、已還原分割與減資，含 kind 欄
 └── 文章/                ← 本機自備，不隨倉庫散布（第三方付費內容）
     ├── *.txt                 抽出的純文字（Claude 讀這個）
     └── 原始/*.pdf, *.docx    來源檔
@@ -183,8 +184,8 @@ for f in research/analyze*.py; do ./envest_agent/bin/python "$f"; done
 
 | 類別 | 處置 |
 |---|---|
-| `data/taiex_daily.csv`、`data/stocks_daily.csv` | **永久保留**，重爬成本高，每天只長約 90 bytes |
-| `data/taiex_enriched.csv`、`data/stocks_adj.csv` | 可刪，幾秒即可重生。**改了原始資料務必重跑** |
+| `data/taiex_daily.csv`、`stocks_daily.csv`、`etf_daily.csv` | **永久保留**，重爬成本高，每天只長約 90 bytes |
+| `data/taiex_enriched.csv`、`data/prices_adj.csv` | 可刪，幾秒即可重生。**改了原始資料務必重跑** |
 | `research/analyze*.py` | 歸檔別刪，每季要拿它驗證門檻 |
 | `文章/原始/` | 保留（來源憑證、含圖表） |
 | log 檔 | 直接刪 |

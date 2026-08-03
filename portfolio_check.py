@@ -21,7 +21,7 @@ import numpy as np, pandas as pd
 
 import positions as pos_store
 import profile_loader
-from paths import STOCKS_ADJ, TAIEX_RAW
+from paths import PRICES_ADJ, TAIEX_RAW
 pd.set_option("display.width", 200)
 
 ATR_EXTREME = 2.5
@@ -86,7 +86,7 @@ def main():
     target_lev = LEV_CAP[code] * pos_coef
     NW = a.net_worth or cfg["net_worth"]
 
-    st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
     if a.asof:
         st = st[st.date <= pd.Timestamp(a.asof)]
     mret = idx.set_index("date").ret

@@ -1,4 +1,4 @@
-"""爬個股/ETF 日線，增量併入 data/stocks_daily.csv（單一檔案，用 sid 區分）
+"""爬個股/ETF 日線 —— 個股存 data/stocks_daily.csv、ETF 存 data/etf_daily.csv
 
 用法:
   python fetch/fetch_stocks.py                    # 更新檔案內既有標的
@@ -18,7 +18,7 @@ import requests
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import STOCKS_RAW, TAIEX_RAW
+from paths import STOCKS_RAW, ETF_RAW, TAIEX_RAW, is_etf
 
 S = requests.Session()
 S.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
@@ -106,11 +106,14 @@ def main():
     ap.add_argument("--since", metavar="YYYY-MM", help="起始年月（預設只抓最近 2 個月）")
     a = ap.parse_args()
 
-    old = (pd.read_csv(STOCKS_RAW, parse_dates=["date"], dtype={"sid": str})
-           if STOCKS_RAW.exists() else pd.DataFrame())
+    def read(pth):
+        return (pd.read_csv(pth, parse_dates=["date"], dtype={"sid": str})
+                if pth.exists() else pd.DataFrame())
+    old = pd.concat([read(STOCKS_RAW), read(ETF_RAW)]) if (STOCKS_RAW.exists() or ETF_RAW.exists()) \
+        else pd.DataFrame()
     sids = a.sids or (sorted(old.sid.unique()) if len(old) else [])
     if not sids:
-        sys.exit("沒有指定標的，且 data/stocks_daily.csv 不存在")
+        sys.exit("沒有指定標的，且 data/stocks_daily.csv 與 data/etf_daily.csv 都不存在")
 
     today = date.today()
     m0 = today.month - 1 or 12
@@ -153,7 +156,15 @@ def main():
     df["name"] = df.sid.map(latest)
     for s, ns in renamed:
         print(f"  ℹ {s} 名稱曾變更 {list(ns)} → 統一為「{latest[s]}」")
-    df.to_csv(STOCKS_RAW, index=False)
+
+    # 個股與 ETF 分開存放，各自一個檔案，方便追蹤
+    etf_mask = df.sid.map(is_etf)
+    df[~etf_mask].to_csv(STOCKS_RAW, index=False)
+    df[etf_mask].to_csv(ETF_RAW, index=False)
+    print(f"\n  個股 {(~etf_mask).sum():5d} 列 → {STOCKS_RAW.name}"
+          f"　（{df[~etf_mask].sid.nunique()} 檔）")
+    print(f"  ETF  {etf_mask.sum():5d} 列 → {ETF_RAW.name}"
+          f"　（{df[etf_mask].sid.nunique()} 檔）")
 
     print(f"\n原有 {n0} 列 → 更新後 {len(df)} 列（新增 {len(df)-n0}）")
     print(df.groupby(["sid", "name"]).agg(列數=("close", "size"), 起=("date", "min"),

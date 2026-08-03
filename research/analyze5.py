@@ -2,11 +2,11 @@
 import numpy as np, pandas as pd
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import TAIEX_RAW, TAIEX_ENRICHED, STOCKS_ADJ, STOCKS_RAW
+from paths import TAIEX_RAW, TAIEX_ENRICHED, PRICES_ADJ, STOCKS_RAW
 pd.set_option("display.width", 200)
 
 idx = pd.read_csv(TAIEX_ENRICHED, parse_dates=["date"]).set_index("date")
-_st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+_st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
 s50 = _st[_st.sid == "0050"].set_index("date").adj_close       # 權值 50
 mid = _st[_st.sid == "0051"].set_index("date").adj_close       # 中型 100
 

@@ -19,7 +19,7 @@ import numpy as np, pandas as pd
 
 import positions as pos_store
 import profile_loader
-from paths import STOCKS_ADJ
+from paths import PRICES_ADJ
 from portfolio_check import taiex_state, DEFAULT_RC, vol_warning
 
 SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
@@ -94,7 +94,7 @@ def main():
     pos_coef = float(np.clip(1.8 / ms.atrp, 0.4, 1.0))
     lev_cap = cfg["leverage_caps"][code] * pos_coef
 
-    st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+    st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
     if a.asof:
         st = st[st.date <= pd.Timestamp(a.asof)]
     mret = idx.set_index("date").ret

@@ -7,11 +7,11 @@
 import sys, pathlib
 import numpy as np, pandas as pd
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from paths import TAIEX_ENRICHED, STOCKS_ADJ
+from paths import TAIEX_ENRICHED, PRICES_ADJ
 pd.set_option("display.width", 210)
 
 idx = pd.read_csv(TAIEX_ENRICHED, parse_dates=["date"]).set_index("date")
-st = pd.read_csv(STOCKS_ADJ, parse_dates=["date"], dtype={"sid": str})
+st = pd.read_csv(PRICES_ADJ, parse_dates=["date"], dtype={"sid": str})
 px = st.pivot_table(index="date", columns="sid", values="adj_close").sort_index()
 px = px.loc["2023-07-03":]
 yrs = (px.index[-1] - px.index[0]).days / 365.25
