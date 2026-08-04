@@ -68,6 +68,8 @@ invest_agent/
 ├── positions.py         持股紀錄（成本／當初停損／融資別）單一事實來源
 ├── buy_check.py         買進前檢查，可盤中用（即時價 + 既有部位曝險）；--asof 可重現當時判斷
 ├── replay.py            交易回放：某天某價買了，之後逐日照 §6 規則會發生什麼
+├── verify_scenarios.py  場景回歸驗證（改策略後必跑，跑真正的 CLI）
+├── SCENARIOS.md         使用場景清單與閘門規格
 ├── skill/               trade-check skill 範本（install.sh 依此產生下面兩份）
 ├── .claude/skills/      專案版 skill（相對路徑，隨倉庫散布）
 ├── fetch/               資料取得與清洗
@@ -161,6 +163,16 @@ invest_agent/
 ./envest_agent/bin/python fetch/fetch_twse.py            # 增量（最近兩個月）
 ./envest_agent/bin/python fetch/fetch_twse.py --full     # 重建（2023-07 至今）
 ```
+
+## 改了策略之後
+
+```bash
+./envest_agent/bin/python verify_scenarios.py     # 五個大盤狀態的閘門 + 再上車情境
+```
+
+驗證五個狀態（A / B1 / B2 / C / D）× 現股/融資 的進場閘門是否走到正確分支，
+以及 C/D 轉 B2 的再上車情境。**跑的是真正的 CLI**，不是重新實作判斷邏輯。
+場景清單與規格見 [SCENARIOS.md](SCENARIOS.md)。**沒通過就不要 commit。**
 
 ## 每季該做的事
 

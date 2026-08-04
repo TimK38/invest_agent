@@ -171,8 +171,19 @@ def main():
         fails.append("狀態閘門：D 狀態禁止做多")
     elif code == "C":
         fails.append("狀態閘門：C 狀態禁止新開倉，且融資餘額須為 0")
-    elif code == "B" and use_margin:
-        fails.append("狀態閘門：B 狀態不得新增融資")
+    elif code == "B":
+        # §2 的 B 有兩條路徑，對進場的意義完全相反（§3 的例外只適用 B2）：
+        #   B1 收盤跌破 SMA20        → 只出不進，現股融資一律禁止
+        #   B2 收盤站上 SMA20 未達 A → §7 訊號成立，可用現股建首波 1/3，融資仍禁止
+        b2 = ms.close > ms.sma20
+        if use_margin:
+            fails.append(f"狀態閘門：B{'2' if b2 else '1'} 狀態不得新增融資")
+        elif not b2:
+            fails.append(f"狀態閘門：B1 狀態（大盤收盤 {ms.close:,.0f} 跌破大盤 SMA20 "
+                         f"{ms.sma20:,.0f}）只出不進——§3 的現股例外只適用 B2")
+        else:
+            passes.append(f"狀態閘門：B2 狀態允許現股建首波 1/3"
+                          f"（大盤收盤 {ms.close:,.0f} > 大盤 SMA20 {ms.sma20:,.0f}）")
     else:
         passes.append(f"狀態閘門：{code} 狀態允許")
     # 2. 盈虧比（隱含目標）

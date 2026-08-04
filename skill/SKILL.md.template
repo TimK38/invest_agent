@@ -54,6 +54,10 @@ cd __PROJECT_ROOT__
 **任何模式的第一步都是 `positions.py` 讀出目前持股**——不要叫使用者重報成本與停損，
 那是紀錄的職責。使用者主動報持股時用 `--reconcile` 比對，不要直接覆寫。
 
+**改動策略後一律執行 `./envest_agent/bin/python verify_scenarios.py`**，
+它用真正的 CLI 驗證五個大盤狀態的閘門行為與再上車情境。**沒通過就不要 commit。**
+場景清單與規格在 `SCENARIOS.md`，閘門規格表在 `verify_scenarios.py` 的 `GATE`。
+
 完整策略在 `STRATEGY.md`，門檻有疑義時以該檔為準。
 **不要自己重算指標，也不要自己算檢查項**——用上面的腳本。
 TWSE 原始價未還原分割與減資，手算會得到錯誤價格。
