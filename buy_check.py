@@ -20,9 +20,8 @@ import numpy as np, pandas as pd
 import positions as pos_store
 import profile_loader
 from paths import PRICES_ADJ
-from portfolio_check import taiex_state, DEFAULT_RC, vol_warning
+from portfolio_check import taiex_state, DEFAULT_RC, vol_warning, SINGLE_CAP
 
-SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
 MAINT = 1.30                                               # 融資維持率追繳線
 DEV_WARN = 4.0            # §7 急漲警示：距 SMA20 幾個 ATR（全樣本 95 百分位）
 
@@ -144,8 +143,9 @@ def main():
         if p["sid"] == a.sid:
             same = (p, pg.adj_close.iloc[-1])
 
+    add_on = same is not None          # S6：已持有 → 這是加碼，不是新開倉
     print("=" * 78)
-    print(f"  買進檢查　{a.sid} {name}　{lots:g} 張 @ {px:.2f}　"
+    print(f"  {'加碼檢查' if add_on else '買進檢查'}　{a.sid} {name}　{lots:g} 張 @ {px:.2f}　"
           f"{'融資' if use_margin else '現股'}　{a.horizon}")
     print(f"  價格來源：{psrc}　｜　大盤狀態依 {ms.date:%Y-%m-%d} 收盤判定（§2 為收盤規則）")
     print("=" * 78)
@@ -158,10 +158,31 @@ def main():
           + ("　⚠ 樣本偏短" if nsample < 250 else ""))
     print(f"  【這筆】市值 {mv:,.0f}（淨資產 {mv/NW:.1%}）　曝險 {exposure:,.0f}（{exposure/NW:.1%}）")
 
+    if add_on:
+        p0, cur_px = same
+        held_lots, opened = p0["lots"], p0.get("opened")
+        # 進場後經過幾個交易日（§7 分批建倉節奏要求站穩 5 個交易日才補到 2/3）
+        sess = st[st.sid == a.sid].date
+        held_days = int((sess > pd.Timestamp(opened)).sum()) if opened else None
+        print(f"  【加碼】已持有 {held_lots:g} 張 @ 成本 {p0['cost']:.2f}"
+              f"（現價 {cur_px:.2f}，損益 {cur_px/p0['cost']-1:+.1%}）"
+              f"　進場日 {opened or '—'}"
+              + (f"　已 {held_days} 個交易日" if held_days is not None else ""))
+
     fails, passes = [], []
 
     def chk(ok, msg):
         (passes if ok else fails).append(msg)
+
+    # S6：加碼的專屬閘門 —— §3「A 狀態才可加碼獲利部位」與 §7 分批建倉節奏
+    if add_on:
+        chk(code == "A", f"§3 加碼只允許在 A 狀態（目前 {code}）"
+            + ("" if code == "A" else "　→ 加碼與新開倉一樣受狀態閘門限制"))
+        if held_days is not None:
+            chk(held_days >= 5, f"§7 分批建倉：站穩 {held_days} 個交易日"
+                + ("（≥ 5，可補到 2/3）" if held_days >= 5 else "（< 5，未達補倉條件）"))
+        if p0.get("stop") and cur_px < p0["stop"]:
+            fails.append(f"已跌破當初停損 {p0['stop']:.2f} → 該出場而不是加碼")
 
     # 0. §7 連續停損禁令
     if until := pos_store.banned(store, a.sid):
@@ -209,10 +230,12 @@ def main():
         f"單一標的曝險 {(own_ex+exposure)/NW:.1%}　上限 {SINGLE_CAP[code]:.0%}")
     # 6. 攤平
     if same and px < same[0]["cost"]:
-        fails.append(f"攤平：已持有 {same[0]['lots']:g} 張，成本 {same[0]['cost']:.2f}，"
-                     f"現價 {px:.2f}（{px/same[0]['cost']-1:+.1%}）虧損中 → 鐵則 1")
+        fails.append(f"**攤平**：已持有 {same[0]['lots']:g} 張，成本 {same[0]['cost']:.2f}，"
+                     f"現價 {px:.2f}（{px/same[0]['cost']-1:+.1%}）虧損中"
+                     f" → 鐵則 1，加碼只能加在獲利部位")
     elif same:
-        passes.append(f"已持有 {same[0]['lots']:g} 張且獲利中，非攤平")
+        passes.append(f"鐵則 1：已持有 {same[0]['lots']:g} 張且獲利中"
+                      f"（{px/same[0]['cost']-1:+.1%}），非攤平")
     else:
         passes.append("新標的，非攤平")
     # 7/8. 波動與回撤下的融資禁令

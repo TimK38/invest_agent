@@ -26,6 +26,8 @@ pd.set_option("display.width", 200)
 
 ATR_EXTREME = 2.5
 DEFAULT_RC = 1.8          # 資料不足時的保守預設
+SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
+STATE_RANK = {"D": 0, "C": 1, "B": 2, "A": 3}              # 用來判斷狀態是升級還是降級
 
 
 def vol_warning(r):
@@ -82,6 +84,15 @@ def main():
     mix = cfg.get("asset_mix") or {"stable_target": 0.72, "tolerance": 0.10, "stable_rc_max": 1.2}
 
     idx, mstate, code = taiex_state(a.asof)
+    # S8：與前一交易日比對，判斷狀態是不是剛降級 —— §3 規定降槓桿必須當日或次日完成
+    prev_code, days_since = None, None
+    if len(idx) >= 2:
+        _, _, prev_code = taiex_state(idx.date.iloc[-2])
+        for k in range(2, min(len(idx), 40)):
+            _, _, c_k = taiex_state(idx.date.iloc[-k])
+            if c_k != code:
+                days_since = k - 1
+                break
     pos_coef = float(np.clip(1.8 / mstate.atrp, 0.4, 1.0))
     target_lev = LEV_CAP[code] * pos_coef
     NW = a.net_worth or cfg["net_worth"]
@@ -105,8 +116,37 @@ def main():
         specs = store["positions"]
         src = f"持股紀錄 {pos_store.store_path(cfg).name}（更新於 {store.get('updated', '—')}）"
         if not specs:
-            sys.exit("持股紀錄是空的。用 positions.py --add SID:張數:成本:停損 建立，"
-                     "或用 --hold 直接指定。")
+            # S17：空手時「現在可以進場嗎」才是真正的問題，不該只丟一句錯誤訊息
+            sig = mstate.close > mstate.sma20 and mstate.close > mstate.sma60
+            print("=" * 80)
+            print(f"  設定檔 {cfg['_name']}   淨資產 {NW:,.0f}   **目前空手**")
+            print(f"  盤面（{mstate.date:%Y-%m-%d}）  狀態【{code}】  加權 {mstate.close:,.0f}  "
+                  f"距高點 {mstate.dd:.1%}  大盤 ATR% {mstate.atrp:.2f}")
+            print("=" * 80)
+            print(f"\n  ── 現在可以進場嗎（§7 兩層都要成立）" + "─" * 38)
+            print(f"    【大盤層級】收盤 > 大盤 SMA20 且 > 大盤 SMA60"
+                  f"　{'✅ 成立' if sig else '❌ 不成立'}")
+            for nm, v in (("大盤 SMA20", mstate.sma20), ("大盤 SMA60", mstate.sma60)):
+                d_ = mstate.close / v - 1
+                print(f"        {nm} {v:,.0f}　收盤 {mstate.close:,.0f}"
+                      f"（{d_:+.1%}）{'▲ 已站上' if d_ > 0 else '▼ 尚未站回'}")
+            if code in "CD":
+                print(f"    ⚠ 但大盤為 {code} 狀態，§3「只出不進」對現股與融資一律適用——"
+                      f"訊號成立之前不要進場")
+            elif sig:
+                print(f"    【個股層級】接著要逐檔看：回檔靠近它自己的 SMA20／EMA21、"
+                      f"回檔量縮、重新轉強")
+                print(f"    【部位】首波只建 1/3，有效槓桿 ≤ "
+                      f"{LEV_CAP['C'] * pos_coef:.2f} 倍，且**只能用現股**"
+                      f"（狀態多半仍是 B2，§3 禁止新增融資）")
+            print(f"\n  ── 目前上限 " + "─" * 60)
+            print(f"    有效槓桿上限 {LEV_CAP[code]} × 波動係數 {pos_coef:.2f} = {target_lev:.2f} 倍"
+                  f"　→ 曝險預算 {NW * target_lev:,.0f}")
+            print(f"    單一標的上限 {SINGLE_CAP[code]:.0%}　→ 單檔曝險上限 "
+                  f"{NW * SINGLE_CAP[code]:,.0f}")
+            print(f"    單筆風險上限 {MAX_RISK_PCT:.1%}　→ {NW * MAX_RISK_PCT:,.0f}")
+            print(f"\n  想買特定標的請跑：./envest_agent/bin/python buy_check.py <代號> <張數>\n")
+            return
 
     rows, detail = [], {}
     for spec in specs:
@@ -159,6 +199,13 @@ def main():
           f"距高點 {mstate.dd:.1%}  ATR% {mstate.atrp:.2f}")
     print(f"  有效槓桿上限 {LEV_CAP[code]} × 波動係數 {pos_coef:.2f} = 【{target_lev:.2f} 倍】"
           + ("   融資須為 0" if code in "CD" else ""))
+    if prev_code and prev_code != code:
+        arrow = "降級" if STATE_RANK[code] < STATE_RANK[prev_code] else "升級"
+        print(f"  ❗ 大盤狀態今日{arrow}：{prev_code} → {code}"
+              + ("　§3：降槓桿必須**今日或次一交易日**完成，不得再觀察"
+                 if arrow == "降級" else ""))
+    elif days_since is not None and STATE_RANK[code] <= 1:
+        print(f"  ※ 已在 {code} 狀態第 {days_since} 個交易日")
     print("=" * 80)
     print(D.assign(市值=D.市值.map("{:,.0f}".format), 曝險=D.曝險.map("{:,.0f}".format)).to_string(index=False))
 
@@ -222,6 +269,7 @@ def main():
             print(f"    {sid:8s} 現價 {r.adj_close:7.2f}   追繳 {call:7.2f}（-{1-call/r.adj_close:.0%}）"
                   f"   ATR {r.atr20:.2f}/日 → 約 {(r.adj_close-call)/r.atr20:.1f} 個 ATR")
 
+    todo = []          # S14：跨標的的今日必做，最後依嚴重度排序輸出
     print("\n  ── 逐檔出場（§6 兩條軸線，取先觸發者；每日收盤判定）" + "─" * 22)
     for sid, (g, r, rc, cost, ustop, lots, is_margin) in detail.items():
         stop = max(r.adj_close - 2 * r.atr20, g.adj_close.tail(10).min() * 0.99)
@@ -244,26 +292,60 @@ def main():
         print(f"        建議停損 {stop:.2f}（-{1-stop/r.adj_close:.1%}；2×ATR 與 10 日低取較近）   "
               f"風險{MAX_RISK_PCT:.1%}反推上限 {max_lots:.0f} 張，現有 {lots:g} 張 "
               f"{'❌ 超過' if lots > max_lots else '✅'}")
+        # S9：沒有新交易也可能違規 —— 漲上去或狀態降級都會讓既有部位被動超標
+        own_ex = lots * 1000 * r.adj_close * rc
+        cap_ex = NW * SINGLE_CAP[code]
+        over_single = own_ex - cap_ex
+        print(f"        單一標的曝險 {own_ex:,.0f}（{own_ex/NW:.1%}）　{code} 狀態上限 "
+              f"{SINGLE_CAP[code]:.0%}　"
+              + (f"❌ 超標 {over_single:,.0f}，需減 {over_single/(rc*r.adj_close*1000)*1000:,.0f} 股"
+                 if over_single > 0 else "✅"))
         if tgt1:
             print(f"        第一目標 {tgt1:.2f}（盈虧比 1:2，成本 +{tgt1/cost-1:.1%}）   "
                   + ("✅ 已達" if r.adj_close >= tgt1 else f"尚差 {tgt1/r.adj_close-1:+.1%}"))
         elif cost:
             print(f"        第一目標 無法計算 → 補上當初停損價：--hold {sid}:{lots:g}:{cost:.2f}:<停損>")
 
+        # §6 兩條軸線取先觸發者；同一檔同日多條觸發，取最嚴重的。
+        # pri 數字越小越急，供下方【今日必做】跨標的排序（S14）。
         if ustop and r.adj_close < ustop:
-            act = f"❗ 跌破當初停損 {ustop:.2f} → 全部出清（不討論、不等反彈）"
+            pri, act = 1, f"❗ 跌破當初停損 {ustop:.2f} → 全部出清（不討論、不等反彈）"
         elif r.adj_close < r.sma20:
-            act = f"❗ 收盤跌破 SMA20 {r.sma20:.2f} → 全部出清（軸線二）"
+            pri, act = 2, f"❗ 收盤跌破 SMA20 {r.sma20:.2f} → 全部出清（軸線二）"
+        elif over_single > 0:
+            pri, act = 3, (f"❗ 單一標的曝險超標 {over_single:,.0f} → 減至 "
+                           f"{cap_ex/(rc*r.adj_close*1000)*1000:,.0f} 股以內")
         elif r.adj_close < r.ema8:
-            act = f"⚠ 收盤跌破 EMA8 {r.ema8:.2f}（仍在 SMA20 之上）→ 出 1/2（軸線二）"
+            pri, act = 4, f"⚠ 收盤跌破 EMA8 {r.ema8:.2f}（仍在 SMA20 之上）→ 出 1/2（軸線二）"
         elif tgt1 and r.adj_close >= tgt1:
-            act = f"達第一目標 {tgt1:.2f} → 賣 30%，停損上移至成本 {cost:.2f}（軸線一）"
+            pri, act = 5, f"達第一目標 {tgt1:.2f} → 賣 30%，停損上移至成本 {cost:.2f}（軸線一）"
         else:
-            act = "續抱。停損只能往上移，永遠不能往下移"
+            pri, act = 9, "續抱。停損只能往上移，永遠不能往下移"
         print(f"        ▶ {act}")
+        if pri < 9:
+            todo.append((pri, sid, g.name.iloc[-1], act, is_margin, rc))
+
+    # ── S14：跨標的的今日必做，依嚴重度排序 ──
+    print("\n  ── 今日必做（按優先序）" + "─" * 50)
+    n = 0
     if code in "CD":
-        print(f"\n    ※ 大盤為 {code} 狀態：不論個股訊號，總曝險須先降至 {target_lev:.2f} 倍以內，"
-              f"且融資餘額須為 0")
+        n += 1
+        print(f"    {n}. ❗ 大盤 {code} 狀態：總曝險降至 {target_lev:.2f} 倍以內"
+              + ("、**融資餘額歸零**" if margin else "")
+              + ("　※ 今日剛降級，§3 要求今日或次一交易日完成"
+                 if prev_code and prev_code != code
+                 and STATE_RANK[code] < STATE_RANK[prev_code] else ""))
+        print(f"       先減融資部位，再減風險係數高的標的"
+              f"（目前最高：{max(todo, key=lambda x: x[5])[1] if todo else '—'}）")
+    if not ok:
+        n += 1
+        print(f"    {n}. ❗ 有效槓桿 {ex_tot/NW:.2f} > 上限 {target_lev:.2f}"
+              f"　→ 降低曝險 {ex_tot - NW*target_lev:,.0f}")
+    for pri, sid, nm, act, is_m, _ in sorted(todo):
+        n += 1
+        print(f"    {n}. {sid} {nm}{'（融資）' if is_m else ''}　{act}")
+    if n == 0:
+        print("    （無）所有部位都在規則內，續抱。停損只能往上移。")
     print()
 
 
