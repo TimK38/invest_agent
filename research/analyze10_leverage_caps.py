@@ -71,10 +71,13 @@ def main():
 
     print(f"  標的池 {len(full)} 檔　期間 {dates[0]:%Y-%m-%d} ~ {dates[-1]:%Y-%m-%d}")
     print(f"  加權指數同期最大回撤 {(idx.close/idx.close.cummax()-1).loc[dates].min():.1%}\n")
-    print(f"  {'槓桿上限':>10s}{'A/B/C':>16s}{'平均有效槓桿':>13s}{'年化':>9s}"
+    print(f"  {'設定':>18s}{'A/B/C':>15s}{'平均有效槓桿':>13s}{'年化':>9s}"
           f"{'最大回撤':>10s}{'報酬/回撤':>10s}{'最低維持率':>11s}{'追繳':>8s}")
 
-    for sc, LAG in [(x, 1) for x in SCALES] + [(2.4, l) for l in LAGS[1:]]:
+    # (槓桿放大倍數, 單一標的放大倍數, 調整頻率)
+    RUNS = [(x, x, 1) for x in SCALES] + [(2.4, 2.4, l) for l in LAGS[1:]] \
+        + [(1.8, 1.0, 1), (2.4, 1.0, 1), (1.8, 1.0, 3), (1.8, 1.0, 5)]   # 只放大槓桿
+    for sc, ssc, LAG in RUNS:
         cap = {k: v * sc for k, v in BASE_CAP.items()}
         eq, curve, levs, minmr, called = 1.0, [], [], 9.9, None
         last_elig, last_c, last_lev = [], 'D', 0.0
@@ -94,7 +97,7 @@ def main():
             # 調整日依訊號重設部位 → 得到市值權重與各檔權重
             wts, mv_w, ex_w = {}, 0.0, 0.0
             if elig and lev > 0:
-                per = min(SINGLE[c_] * sc, lev / len(elig))
+                per = min(SINGLE[c_] * ssc, lev / len(elig))
                 for s in elig:
                     w = per / rc_hist[prev][s]
                     wts[s] = w
@@ -126,8 +129,9 @@ def main():
         yrs = (dates[-1] - dates[1]).days / 365.25
         mdd = (c / c.cummax() - 1).min()
         ann = c.iloc[-1] ** (1 / yrs) - 1
-        tag = f"{sc:.1f}×" + ("" if LAG == 1 else f" 每{LAG}日調")
-        print(f"  {tag:>10s}{f'{cap[chr(65)]:.1f}/{cap[chr(66)]:.1f}/{cap[chr(67)]:.1f}':>15s}"
+        tag = f"{sc:.1f}×" + ("" if LAG == 1 else f" 每{LAG}日調") \
+            + ("" if ssc == sc else " 單一不放大")
+        print(f"  {tag:>18s}{f'{cap[chr(65)]:.1f}/{cap[chr(66)]:.1f}/{cap[chr(67)]:.1f}':>15s}"
               f"{np.mean(levs):>13.2f}{ann:>9.1%}{mdd:>10.1%}"
               f"{ann/abs(mdd):>10.2f}{minmr:>11.0%}"
               f"{'❗' + called.strftime('%y-%m-%d') if called else '  無':>8s}")
