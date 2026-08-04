@@ -26,6 +26,17 @@ MAINT = 1.30                                               # 融資維持率追�
 DEV_WARN = 4.0            # §7 急漲警示：距 SMA20 幾個 ATR（全樣本 95 百分位）
 
 
+def lots_txt(x):
+    """張數一律**無條件捨去**；不足 1 張改用股數表示（台股有盤中零股）。
+
+    絕不可四捨五入：0.65 張若顯示成「1 張」，那 1 張其實過不了部位大小檢查，
+    輸出會自相矛盾（上面列出違規、下面卻說可以買 1 張）。這是曾經發生過的 bug。
+    """
+    if x >= 1:
+        return f"{int(x)} 張"
+    return f"{int(x * 1000 / 10) * 10} 股" if x > 0 else "0"
+
+
 def quote(sid):
     """TWSE MIS 即時報價；回傳 (價格, 來源說明) 或 (None, 原因)"""
     try:
@@ -277,13 +288,6 @@ def main():
     cap_lev = max(0.0, (NW * lev_cap - ex_have)) / (rc * px * 1000)
     cap_single = max(0.0, (NW * SINGLE_CAP[code] - own_ex)) / (rc * px * 1000)
     cap = min(cap_risk, cap_lev, cap_single)
-
-    def lots_txt(x):
-        """張數一律無條件捨去；不足 1 張改用股數表示（盤中零股可買）。
-        四捨五入會把 0.6 張顯示成「1 張」，而那 1 張其實過不了檢查。"""
-        if x >= 1:
-            return f"{int(x)} 張"
-        return f"{int(x * 1000 / 10) * 10} 股" if x > 0 else "0"
 
     print(f"\n  【結論】{'❌ 不可執行' if fails else '✅ 可執行'}"
           + (f"　違反 {len(fails)} 項" if fails else ""))

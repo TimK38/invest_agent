@@ -30,10 +30,19 @@ VPROFILE = {"name": VP, "net_worth": 8_000_000, "margin_allowed": True,
             "asset_mix": {"stable_target": 0.72, "tolerance": 0.1, "stable_rc_max": 1.2}}
 
 
-def write_positions(positions):
+def write_positions(positions, closed=None):
     VPROF.write_text(json.dumps(VPROFILE, ensure_ascii=False, indent=2), encoding="utf-8")
-    VPOS.write_text(json.dumps({"positions": positions, "closed": []},
+    VPOS.write_text(json.dumps({"positions": positions, "closed": closed or []},
                                ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def closed_rec(sid, days_ago, reason="停損"):
+    """產生一筆出場紀錄。§7 的禁令以『今天』為基準，所以日期要相對於今天算。"""
+    from datetime import date as _d, timedelta
+    return {"sid": sid, "lots": 1, "cost": 100.0, "stop": 90.0, "margin": False,
+            "horizon": "波段", "opened": str(_d.today() - timedelta(days=days_ago + 30)),
+            "exit": 90.0, "reason": reason, "date": str(_d.today() - timedelta(days=days_ago)),
+            "pnl": -0.1}
 
 
 def cleanup():
@@ -152,9 +161,36 @@ def build_cases():
                           tool=tool, px=px_on("2330", d.date.iloc[-1]) or 2000.0))
     # ── S18b：freshness() 在四種時點的判定（純函式，不連網）──
     cases.append(dict(name="S18 freshness 四種時點判定正確", kind="fresh_fn"))
+    # S11b：lots_txt 純函式 —— 無條件捨去，絕不可四捨五入把 0.65 張印成「1 張」
+    cases.append(dict(name="S11 lots_txt 必須無條件捨去", kind="lots_fn"))
     # ── S20：盤中提問時，逐檔動作必須標明是收盤判定 + 假訊號率 ──
     cases.append(dict(name="S20 盤中應警告收盤判定與假訊號率", kind="intraday",
                       px=px_on("2330", d.date.iloc[-1]) or 2000.0))
+    # ── S10：§7 連續停損 2 次 → 30 天禁交易（四種組合，含「不該擋」的情況）──
+    for nm, closed, want in (
+        ("30 天內停損 2 次 → 應擋", [closed_rec("2330", 3), closed_rec("2330", 20)], True),
+        ("只停損 1 次 → 不該擋", [closed_rec("2330", 3)], False),
+        ("停損 2 次但相隔 > 30 天 → 不該擋",
+         [closed_rec("2330", 3), closed_rec("2330", 45)], False),
+        ("出場原因是「規則」非停損 → 不該擋",
+         [closed_rec("2330", 3, "規則"), closed_rec("2330", 20, "規則")], False)):
+        cases.append(dict(name=f"S10 {nm}", kind="ban", closed=closed, want=want,
+                          asof=f"{a_day:%Y-%m-%d}", sid="2330",
+                          px=px_on("2330", a_day) or 2000.0))
+    # ── S11：不足 1 張要印股數，且印出來的上限必須自己驗得過 ──
+    for sid in ("3653", "3017", "2454"):  # 高價股，1 張必定超標；2454 的上限落在 0.5~1 張區間
+        day = d[d.s == "A"].tail(1).date.iloc[0]
+        px = px_on(sid, day)
+        if px:
+            cases.append(dict(name=f"S11 {sid} 高價股上限應以股表示且自洽",
+                              kind="oddlot", asof=f"{day:%Y-%m-%d}", sid=sid, px=px))
+    # ── S15：融資追繳線 —— 融資才印、現股不印，且數字要等於 成本×1.30×成數 ──
+    px = px_on("2330", a_day)
+    if px:
+        cases.append(dict(name="S15 融資應印追繳價且公式正確", kind="call",
+                          asof=f"{a_day:%Y-%m-%d}", sid="2330", px=px, margin=True))
+        cases.append(dict(name="S15 現股不應出現追繳價", kind="call",
+                          asof=f"{a_day:%Y-%m-%d}", sid="2330", px=px, margin=False))
     # ── S17：空手時應回答「現在可以進場嗎」，而不是報錯 ──
     for day, code in ((c_day, "C"), (a_day, "A")):
         cases.append(dict(name=f"S17 {code} 狀態空手應顯示進場條件", kind="flat",
@@ -210,6 +246,61 @@ def check(c):
         nums = re.findall(r"^\s+(\d+)\. ", block, re.M)
         ok = len(nums) >= 2 and nums == sorted(nums, key=int)
         return ok, f"今日必做 {len(nums)} 項且已排序" if ok else "清單未排序或項目不足", out
+    if c["kind"] == "ban":
+        write_positions([], c["closed"])
+        out = run(["buy_check.py", c["sid"], "0.01", "--asof", c["asof"],
+                   "--price", f"{c['px']:.2f}", "--cash"])
+        got = "§7 該檔 30 天內停損 2 次" in out
+        ok = got == c["want"]
+        return ok, (f"禁令 {'觸發' if got else '未觸發'}（預期"
+                    f"{'觸發' if c['want'] else '不觸發'}）"), out
+    if c["kind"] == "lots_fn":
+        import importlib
+        sys.path.insert(0, str(ROOT))
+        f = importlib.import_module("buy_check").lots_txt
+        want = {2.7: "2 張", 1.0: "1 張", 0.99: "990 股", 0.65: "650 股",
+                0.5: "500 股", 0.34: "340 股", 0.004: "0 股", 0: "0"}
+        bad = [f"{k}→{f(k)}（應 {v}）" for k, v in want.items() if f(k) != v]
+        return (not bad), ("八個邊界值都正確" if not bad else f"**捨入錯誤**：{bad}"), ""
+    if c["kind"] == "oddlot":
+        write_positions([])
+        out = run(["buy_check.py", c["sid"], "1", "--asof", c["asof"],
+                   "--price", f"{c['px']:.2f}", "--cash"])
+        m = re.search(r"滿倉上限\s+([\d,]+)\s*(張|股)", out)
+        if not m:
+            return False, "**找不到滿倉上限那一行**", out
+        n, unit = int(m.group(1).replace(",", "")), m.group(2)
+        # 自洽檢查一律要做，不分單位 —— 原本的 bug 正是「印 1 張，但 1 張過不了檢查」，
+        # 若看到「張」就直接放行，這個測試就永遠抓不到那種迴歸。
+        lots_back = n if unit == "張" else n / 1000
+        if lots_back <= 0:
+            return False, "**上限印成 0，無法驗證自洽**", out
+        out2 = run(["buy_check.py", c["sid"], f"{lots_back:.4f}", "--asof", c["asof"],
+                    "--price", f"{c['px']:.2f}", "--cash"])
+        bad = [l for l in out2.splitlines()
+               if l.strip().startswith("❌") and any(k in l for k in
+                                                    ("單筆風險", "有效槓桿", "單一標的"))]
+        ok = not bad
+        return ok, (f"上限 {n} {unit}，餵回去三項部位檢查全過" if ok
+                    else f"**印出的上限自己驗不過**：{bad[0].strip()[:50]}"), out2
+    if c["kind"] == "call":
+        write_positions([])
+        args = ["buy_check.py", c["sid"], "0.01", "--asof", c["asof"],
+                "--price", f"{c['px']:.2f}"]
+        if not c["margin"]:
+            args.append("--cash")
+        out = run(args)
+        m = re.search(r"融資追繳\s+([\d,.]+)", out)
+        if not c["margin"]:
+            ok = m is None
+            return ok, "現股未印追繳價" if ok else "**現股卻印了追繳價**", out
+        if not m:
+            return False, "**融資卻沒印追繳價**", out
+        got = float(m.group(1).replace(",", ""))
+        want = c["px"] * 1.30 * VPROFILE["margin_rate"]
+        ok = abs(got - want) < 0.02
+        return ok, (f"追繳 {got:.2f} = 成本×1.30×{VPROFILE['margin_rate']}" if ok
+                    else f"**追繳價不符**：印 {got:.2f}、應為 {want:.2f}"), out
     if c["kind"] == "fresh":
         write_positions([])
         if c["tool"] == "market_state":
