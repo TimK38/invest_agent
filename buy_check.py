@@ -242,10 +242,18 @@ def main():
     cap_single = max(0.0, (NW * SINGLE_CAP[code] - own_ex)) / (rc * px * 1000)
     cap = min(cap_risk, cap_lev, cap_single)
 
+    def lots_txt(x):
+        """張數一律無條件捨去；不足 1 張改用股數表示（盤中零股可買）。
+        四捨五入會把 0.6 張顯示成「1 張」，而那 1 張其實過不了檢查。"""
+        if x >= 1:
+            return f"{int(x)} 張"
+        return f"{int(x * 1000 / 10) * 10} 股" if x > 0 else "0"
+
     print(f"\n  【結論】{'❌ 不可執行' if fails else '✅ 可執行'}"
           + (f"　違反 {len(fails)} 項" if fails else ""))
-    print(f"\n  【張數上限】1.5%風險 {cap_risk:.0f} 張／槓桿上限 {cap_lev:.0f} 張／"
-          f"單一標的 {cap_single:.0f} 張　→ 取最小 {cap:.0f} 張（首筆 1/3 = {cap/3:.0f} 張）")
+    print(f"\n  【張數上限】1.5%風險 {lots_txt(cap_risk)}／槓桿上限 {lots_txt(cap_lev)}／"
+          f"單一標的 {lots_txt(cap_single)}　→ 取最小 {lots_txt(cap)}"
+          f"（首筆 1/3 = {lots_txt(cap/3)}）")
 
     print(f"\n  【下單卡{'（本次不可執行，以下僅供了解距離多遠）' if fails else ''}】"
           f"{a.sid} {name} · {a.horizon} · {'融資' if use_margin else '現股'}")
@@ -253,8 +261,8 @@ def main():
     print(f"    停損價    {stop:8.2f}  (-{1-stop/px:.1%})"
           + ("  ← 你指定" if a.stop else "  2×ATR 與 10 日低取較近"))
     print(f"    隱含目標  {tgt:8.2f}  (+{tgt/px-1:.1%})  ← 需你確認上方無壓力")
-    print(f"    首筆張數  {cap/3:8.0f} 張")
-    print(f"    滿倉上限  {cap:8.0f} 張")
+    print(f"    首筆部位  {lots_txt(cap/3):>8s}")
+    print(f"    滿倉上限  {lots_txt(cap):>8s}")
     if use_margin:
         call = px * MAINT * mrate
         print(f"    融資追繳  {call:8.2f}  (-{1-call/px:.0%}，約 {(px-call)/last.atr20:.1f} 個 ATR)")
