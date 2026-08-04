@@ -17,6 +17,7 @@
   淨資產、單筆風險 %、槓桿上限皆取自 profiles/<名字>.json
 """
 import sys, argparse
+from datetime import datetime, time as dtime
 import numpy as np, pandas as pd
 
 import positions as pos_store
@@ -28,6 +29,33 @@ ATR_EXTREME = 2.5
 DEFAULT_RC = 1.8          # 資料不足時的保守預設
 SINGLE_CAP = {"A": 0.25, "B": 0.20, "C": 0.15, "D": 0.0}   # §3 單一標的曝險上限
 STATE_RANK = {"D": 0, "C": 1, "B": 2, "A": 3}              # 用來判斷狀態是升級還是降級
+
+
+MARKET_CLOSE = dtime(13, 30)     # 台股收盤
+# S20：盤中跌破 SMA20 但收盤守住的比率（本專案資料實測，2023-07~2026-08）
+INTRADAY_FAKE = "大盤 15%、個股平均 16%（00981A 高達 34%）"
+
+
+def freshness(last_date, now=None):
+    """S18：資料有多新？回傳 (是否可視為當日收盤判定, 說明字串)
+
+    §6 是**收盤**判定。若在盤中或非交易日提問，工具給的動作其實是「上一個收盤」的，
+    不標明就會被當成今天的指令——那是最容易誤判的一種 bug，而且不會報錯。
+    """
+    now = now or datetime.now()
+    last, today = pd.Timestamp(last_date).date(), now.date()
+    if last == today:
+        return True, f"當日收盤資料（{last}）"
+    gap = (today - last).days
+    if today.weekday() >= 5:
+        return False, (f"⚠ 今天 {today}（{'週六' if today.weekday()==5 else '週日'}）非交易日"
+                       f" → 以下全部依 **{last} 收盤** 判定")
+    if now.time() < MARKET_CLOSE:
+        return False, (f"⚠ 今天 {today} **尚未收盤**（現在 {now:%H:%M}，收盤 13:30）"
+                       f" → 以下全部依 **{last} 收盤** 判定，不是今天的盤")
+    return False, (f"⚠ 今天 {today} 已收盤，但資料只到 **{last}**（{gap} 天前）"
+                   f" → 可能是假日，也可能是**資料未更新**。"
+                   f"若今天有開盤，先跑 fetch/fetch_twse.py 與 fetch/fetch_stocks.py")
 
 
 def vol_warning(r):
@@ -122,6 +150,8 @@ def main():
             print(f"  設定檔 {cfg['_name']}   淨資產 {NW:,.0f}   **目前空手**")
             print(f"  盤面（{mstate.date:%Y-%m-%d}）  狀態【{code}】  加權 {mstate.close:,.0f}  "
                   f"距高點 {mstate.dd:.1%}  大盤 ATR% {mstate.atrp:.2f}")
+            if not a.asof:
+                print(f"  {freshness(mstate.date)[1]}")
             print("=" * 80)
             print(f"\n  ── 現在可以進場嗎（§7 兩層都要成立）" + "─" * 38)
             print(f"    【大盤層級】收盤 > 大盤 SMA20 且 > 大盤 SMA60"
@@ -196,7 +226,10 @@ def main():
     print("=" * 80)
     print(f"  設定檔 {cfg['_name']}   淨資產 {NW:,.0f}   持股來源：{src}")
     print(f"  盤面（{mstate.date:%Y-%m-%d}）  狀態【{code}】  加權 {mstate.close:,.0f}  "
-          f"距高點 {mstate.dd:.1%}  ATR% {mstate.atrp:.2f}")
+          f"距高點 {mstate.dd:.1%}  大盤 ATR% {mstate.atrp:.2f}")
+    if not a.asof:
+        fresh, fmsg = freshness(mstate.date)
+        print(f"  {fmsg}")
     print(f"  有效槓桿上限 {LEV_CAP[code]} × 波動係數 {pos_coef:.2f} = 【{target_lev:.2f} 倍】"
           + ("   融資須為 0" if code in "CD" else ""))
     if prev_code and prev_code != code:
@@ -271,6 +304,13 @@ def main():
 
     todo = []          # S14：跨標的的今日必做，最後依嚴重度排序輸出
     print("\n  ── 逐檔出場（§6 兩條軸線，取先觸發者；每日收盤判定）" + "─" * 22)
+    if not a.asof:
+        fresh, _ = freshness(mstate.date)
+        if not fresh:
+            print(f"    ⚠ 以下動作依 {mstate.date:%Y-%m-%d} **收盤**判定，不是即時的。")
+            print(f"      §6 是收盤判定規則。**盤中假訊號率**（盤中跌破 SMA20 但收盤守住）："
+                  f"{INTRADAY_FAKE}——照盤中訊號賣會被洗掉。")
+            print(f"      要在今天執行出場，請於 13:20~13:25 用當下價格再判一次。")
     for sid, (g, r, rc, cost, ustop, lots, is_margin) in detail.items():
         stop = max(r.adj_close - 2 * r.atr20, g.adj_close.tail(10).min() * 0.99)
         risk_sh = r.adj_close - stop

@@ -20,7 +20,7 @@ import numpy as np, pandas as pd
 import positions as pos_store
 import profile_loader
 from paths import PRICES_ADJ
-from portfolio_check import taiex_state, DEFAULT_RC, vol_warning, SINGLE_CAP
+from portfolio_check import taiex_state, DEFAULT_RC, vol_warning, SINGLE_CAP, freshness
 
 MAINT = 1.30                                               # 融資維持率追繳線
 DEV_WARN = 4.0            # §7 急漲警示：距 SMA20 幾個 ATR（全樣本 95 百分位）
@@ -148,6 +148,8 @@ def main():
     print(f"  {'加碼檢查' if add_on else '買進檢查'}　{a.sid} {name}　{lots:g} 張 @ {px:.2f}　"
           f"{'融資' if use_margin else '現股'}　{a.horizon}")
     print(f"  價格來源：{psrc}　｜　大盤狀態依 {ms.date:%Y-%m-%d} 收盤判定（§2 為收盤規則）")
+    if not a.asof:
+        print(f"  {freshness(ms.date)[1]}")
     print("=" * 78)
     print(f"  【盤面】狀態【{code}】  加權 {ms.close:,.0f}  距高點 {ms.dd:.1%}  ATR% {ms.atrp:.2f}")
     print(f"          有效槓桿上限 {cfg['leverage_caps'][code]} × 波動係數 {pos_coef:.2f} "

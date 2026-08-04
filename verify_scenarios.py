@@ -146,6 +146,15 @@ def build_cases():
     if px2 and px3:
         cases.append(dict(name="S14 多檔同時觸發應有優先序清單", kind="todo",
                           asof=f"{c_day:%Y-%m-%d}", px=px2, px2=px3, code="C"))
+    # ── S18：非交易日／盤中提問，三支工具都要標明資料時點 ──
+    for tool in ("market_state", "portfolio_check", "buy_check"):
+        cases.append(dict(name=f"S18 {tool} 應標明資料時點", kind="fresh",
+                          tool=tool, px=px_on("2330", d.date.iloc[-1]) or 2000.0))
+    # ── S18b：freshness() 在四種時點的判定（純函式，不連網）──
+    cases.append(dict(name="S18 freshness 四種時點判定正確", kind="fresh_fn"))
+    # ── S20：盤中提問時，逐檔動作必須標明是收盤判定 + 假訊號率 ──
+    cases.append(dict(name="S20 盤中應警告收盤判定與假訊號率", kind="intraday",
+                      px=px_on("2330", d.date.iloc[-1]) or 2000.0))
     # ── S17：空手時應回答「現在可以進場嗎」，而不是報錯 ──
     for day, code in ((c_day, "C"), (a_day, "A")):
         cases.append(dict(name=f"S17 {code} 狀態空手應顯示進場條件", kind="flat",
@@ -201,6 +210,43 @@ def check(c):
         nums = re.findall(r"^\s+(\d+)\. ", block, re.M)
         ok = len(nums) >= 2 and nums == sorted(nums, key=int)
         return ok, f"今日必做 {len(nums)} 項且已排序" if ok else "清單未排序或項目不足", out
+    if c["kind"] == "fresh":
+        write_positions([])
+        if c["tool"] == "market_state":
+            out = run(["market_state.py", "--no-fetch"])
+        elif c["tool"] == "portfolio_check":
+            out = run(["portfolio_check.py", "--hold", f"2330:1:{c['px']:.2f}", "--cash"])
+        else:
+            out = run(["buy_check.py", "2330", "0.01", "--cash", "--price", f"{c['px']:.2f}"])
+        # 必須出現「當日收盤資料」或四種警語之一，不可完全沒有時點說明
+        ok = ("當日收盤資料" in out or "尚未收盤" in out
+              or "非交易日" in out or "資料只到" in out)
+        return ok, "有標明資料時點" if ok else "**沒有標明資料時點**", out
+    if c["kind"] == "fresh_fn":
+        import importlib
+        sys.path.insert(0, str(ROOT))
+        fr = importlib.import_module("portfolio_check").freshness
+        from datetime import datetime as DT
+        checks = [
+            (pd.Timestamp("2026-08-04"), DT(2026, 8, 4, 15, 0), True, "當日收盤資料"),
+            (pd.Timestamp("2026-08-03"), DT(2026, 8, 4, 12, 0), False, "尚未收盤"),
+            (pd.Timestamp("2026-07-31"), DT(2026, 8, 1, 15, 0), False, "非交易日"),
+            (pd.Timestamp("2026-07-28"), DT(2026, 8, 4, 15, 0), False, "資料只到"),
+        ]
+        bad = []
+        for last, now, want_fresh, want_txt in checks:
+            got_fresh, txt = fr(last, now)
+            if got_fresh != want_fresh or want_txt not in txt:
+                bad.append(f"{last.date()}@{now:%m-%d %H:%M} → {txt[:40]}")
+        return (not bad), ("四種時點都正確" if not bad else f"**判定錯誤**：{bad}"), ""
+    if c["kind"] == "intraday":
+        write_positions([])
+        out = run(["portfolio_check.py", "--hold", f"2330:1:{c['px']:.2f}", "--cash"])
+        fresh_now = "當日收盤資料" in out
+        if fresh_now:
+            return True, "當日資料，不需盤中警語", out
+        ok = "依" in out and "收盤**判定" in out and "假訊號" in out and "13:20" in out
+        return ok, "有盤中警語與假訊號率" if ok else "**盤中缺少收盤判定警語**", out
     if c["kind"] == "flat":
         write_positions([])
         out = run(["portfolio_check.py", "--asof", c["asof"]])
@@ -257,7 +303,7 @@ def main():
         cases = [c for c in cases if a.k in c["name"]]
     if a.list:
         for c in cases:
-            print(f"  [{c['kind']:7s}] {c['asof']}  {c['name']}")
+            print(f"  [{c['kind']:9s}] {c.get('asof', '今日'):10s}  {c['name']}")
         print(f"\n  共 {len(cases)} 個場景")
         return
 
@@ -271,7 +317,8 @@ def main():
             ok, msg, out = check(c)
         except Exception as e:
             ok, msg, out = False, f"{type(e).__name__}: {e}", ""
-        print(f"  {'✅' if ok else '❌'} {c['asof']}  {c['name']:32s} {msg}")
+        print(f"  {'✅' if ok else '❌'} {c.get('asof', '  今日      '):10s}  "
+              f"{c['name']:32s} {msg}")
         if not ok:
             fails.append((c, msg, out))
     print("\n" + "=" * 84)
@@ -279,7 +326,7 @@ def main():
     if fails:
         print(f"\n  ❌ {len(fails)} 個場景失敗：")
         for c, msg, out in fails:
-            print(f"\n    {c['asof']} {c['name']}\n      {msg}")
+            print(f"\n    {c.get('asof', '今日')} {c['name']}\n      {msg}")
             if a.v:
                 print("      " + "\n      ".join(out.splitlines()[:30]))
         sys.exit(1)

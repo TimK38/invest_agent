@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 import profile_loader
+from portfolio_check import freshness
 from paths import TAIEX_RAW as CSV
 OHLC = "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date={ym}01&response=json"
 VOL = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={ym}01&response=json"
@@ -162,6 +163,8 @@ def main():
     print("=" * 66)
     print(f"  加權指數 {r.close:>10,.0f}   {r.ret*100:+.2f}%    距歷史高點 {r.dd:+.1%}")
     print(f"  ATR%     {r.atrp:>10.2f}   （3年均 {df.atrp.mean():.2f}，>{ATR_EXTREME} 為極端）")
+    if not a.asof:
+        print(f"\n  {freshness(r.date)[1]}")
     print(f"  20日均量 {r.tovr20/1e8:>10,.0f} 億   當日量比 {r.vratio:.2f}")
     print("\n  均線位置")
     for k in ("ema8", "ema21", "sma20", "sma60", "sma120", "sma200"):
